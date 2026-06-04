@@ -10,6 +10,26 @@ A Microsoft Edge / Chromium browser extension (Manifest V3) that scans the visib
 
 ---
 
+## Quick start
+
+### First-time install (≈30 seconds)
+
+1. Download the latest ZIP: **[edge-banned-terms-warning-X.Y.Z.zip](https://github.com/guypritchard/edge-banned-terms-warning/releases/latest)**.
+2. **Extract** it to a folder you'll keep (e.g. `C:\Tools\banned-terms-warning\`). Edge loads the extension from this folder - don't delete or move it.
+3. Open `edge://extensions/`, turn on **Developer mode** (bottom-left).
+4. Click **Load unpacked** and select the extracted folder.
+5. Click the extension icon → **Settings** to add your banned terms.
+
+### Upgrade to a new version (≈10 seconds)
+
+1. Download the new ZIP from **[Releases](https://github.com/guypritchard/edge-banned-terms-warning/releases/latest)**.
+2. **Extract over the same folder** you used the first time (replace all files).
+3. Open `edge://extensions/` and click the **reload (↻)** icon on the extension card.
+
+That's it. Your configuration is preserved.
+
+---
+
 ## Features
 
 - ⚠️ Dismissible red banner at the top of any page containing matched terms
@@ -23,28 +43,26 @@ A Microsoft Edge / Chromium browser extension (Manifest V3) that scans the visib
 
 ---
 
-## Install (Developer Mode)
+## Install (full details)
 
-The extension is not (yet) published to the Edge Add-ons store. Install from a GitHub release:
-
-1. Go to the [**Releases**](https://github.com/guypritchard/edge-banned-terms-warning/releases/latest) page.
-2. Download the latest `edge-banned-terms-warning-<version>.zip`.
-3. **Extract** the ZIP to a folder you'll keep around (Edge loads the extension from disk - if you delete or move it, the extension breaks).
-4. Open Edge and navigate to `edge://extensions/`.
-5. Toggle **Developer mode** on (bottom-left of the page).
-6. Click **Load unpacked** and select the **extracted folder** (not the zip).
-7. Pin the extension to the toolbar via the puzzle-piece menu (optional).
-8. Click the extension icon -> **Settings** to configure your banned terms.
+The extension is not (yet) published to the Edge Add-ons store, so install is from a GitHub release ZIP - see the [Quick start](#quick-start) above.
 
 > The same package also works in Google Chrome, Brave, Opera, and other Chromium browsers via `chrome://extensions/`.
 
-### Updating
+### Verifying the download (optional but recommended)
 
-When a new release is published:
+Each release also publishes a `.zip.sha256` file. To verify the ZIP wasn't tampered with in transit:
 
-1. Download the new ZIP from Releases.
-2. Extract over the existing folder (or to a new folder).
-3. On `edge://extensions/`, click the **reload** (↻) icon on the extension card.
+```powershell
+# Windows PowerShell
+Get-FileHash edge-banned-terms-warning-X.Y.Z.zip -Algorithm SHA256
+# Compare the output against the contents of edge-banned-terms-warning-X.Y.Z.zip.sha256
+```
+
+```bash
+# macOS / Linux
+shasum -a 256 -c edge-banned-terms-warning-X.Y.Z.zip.sha256
+```
 
 ---
 
