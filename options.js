@@ -2,6 +2,7 @@ const DEFAULTS = {
   enabled: true,
   caseSensitive: false,
   wholeWordOnly: true,
+  highlightMatches: true,
   globalTerms: [],
   siteRules: [],
   disabledHosts: []
@@ -51,6 +52,7 @@ async function load() {
   document.getElementById("enabled").checked = !!c.enabled;
   document.getElementById("caseSensitive").checked = !!c.caseSensitive;
   document.getElementById("wholeWordOnly").checked = !!c.wholeWordOnly;
+  document.getElementById("highlightMatches").checked = c.highlightMatches !== false;
   document.getElementById("globalTerms").value = arrToLines(c.globalTerms);
   document.getElementById("disabledHosts").value = arrToLines(c.disabledHosts);
   const wrap = document.getElementById("siteRules");
@@ -63,6 +65,7 @@ async function save() {
     enabled: document.getElementById("enabled").checked,
     caseSensitive: document.getElementById("caseSensitive").checked,
     wholeWordOnly: document.getElementById("wholeWordOnly").checked,
+    highlightMatches: document.getElementById("highlightMatches").checked,
     globalTerms: linesToArr(document.getElementById("globalTerms").value),
     disabledHosts: linesToArr(document.getElementById("disabledHosts").value),
     siteRules: collectRules()

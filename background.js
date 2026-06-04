@@ -5,6 +5,7 @@ const DEFAULT_CONFIG = {
   enabled: true,
   caseSensitive: false,
   wholeWordOnly: true,
+  highlightMatches: true,
   globalTerms: [],
   // siteRules: array of { pattern: "example.com" (substring/host match), terms: ["..."] }
   siteRules: [],
