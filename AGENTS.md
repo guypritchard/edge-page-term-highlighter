@@ -1,0 +1,367 @@
+# AGENTS.md
+
+Operating guide for AI coding agents (and humans) working on the
+**Banned Terms Warning** Microsoft Edge / Chromium extension.
+
+This file captures every cross-cutting decision we have made about how the
+extension is built, packaged, released, and hardened. Read it in full before
+making changes - especially anything that touches storage, the DOM, the
+release pipeline, or the manifest.
+
+---
+
+## 1. What this extension is
+
+- A **Manifest V3** browser extension that scans every page's visible text
+  for user-configured banned terms.
+- On match: shows a red ⚠️ banner (in a closed shadow root), paints a
+  highlight on each match, optionally injects a ⚠️ marker beside each
+  match, and exposes the match list in the toolbar popup with
+  **scroll-to-match** controls.
+- Runs in Microsoft Edge primarily, but also Chrome / Brave / Opera and any
+  other Chromium-based browser via the same package.
+
+## 2. Non-negotiable principles
+
+1. **Zero network calls.** Never add `fetch`, `XMLHttpRequest`,
+   `WebSocket`, or any analytics/telemetry. Privacy is the point.
+2. **Zero runtime dependencies.** Vanilla JS / HTML / CSS only. No `npm`
+   packages in the shipped ZIP. No bundlers.
+3. **Local-first storage.** New installs default to
+   `chrome.storage.local`. `chrome.storage.sync` is opt-in only.
+4. **No leakage of the configured term list to web pages.** Anything we
+   inject into the page must not carry the configured terms in attributes
+   or accessible properties.
+5. **Defensive observation, not aggressive mutation.** Prefer the CSS
+   Custom Highlight API where possible. When we must mutate the DOM, use
+   minimal, opaque markers and never touch user inputs / contenteditable
+   regions / `<script>` / `<style>` / `<code>` / `<pre>` / iframes / SVG /
+   canvas.
+6. **No emojis in code / docs unless the user explicitly asks for them.**
+   The ⚠️ in the banner and markers IS asked-for product behaviour and
+   stays.
+
+## 3. Repository layout
+
+```
+.
+├── manifest.json              # MV3 manifest. Version here drives releases.
+│                              #   Declares strict CSP + minimum_chrome_version.
+├── background.js              # Service worker (badge state, install hook,
+│                              #   strict sender-origin check).
+├── content.js                 # Page scanner, highlight engine, marker UI,
+│                              #   MutationObserver, SPA hooks, popup IPC.
+├── lib/
+│   ├── config.js              # Shared storage helpers (BTWConfig namespace).
+│   └── matching.js            # PURE helpers (BTWMatching): regex builder,
+│                              #   hostMatches, DEFAULT_CONFIG, sanitiser.
+│                              #   No chrome.*, no DOM - unit tested.
+├── popup.html / popup.js      # Toolbar popup. Match list + scroll-to.
+├── options.html / options.js  # Full settings page (incl. storage area
+│                              #   radio). Uses BTWMatching for sanitising
+│                              #   imported JSON and saved config.
+├── test/
+│   ├── matching.test.js       # node:test unit tests for BTWMatching.
+│   └── config.test.js         # node:test tests for BTWConfig with a
+│                              #   chrome.storage stub loaded via vm.
+├── icons/                     # 16 / 48 / 128 PNGs, generated locally.
+├── .github/
+│   ├── dependabot.yml         # Weekly Action updates.
+│   └── workflows/
+│       ├── validate.yml       # manifest + CSP check + lint + node --test.
+│       ├── release.yml        # Tag-driven ZIP + SHA256 + GH Release.
+│       └── codeql.yml         # JavaScript SAST.
+├── README.md                  # End-user docs.
+├── AGENTS.md                  # THIS FILE.
+└── LICENSE                    # MIT.
+```
+
+The four execution contexts each load `lib/config.js` and `lib/matching.js`:
+
+| Context        | How libs are loaded                                                              |
+|----------------|----------------------------------------------------------------------------------|
+| Content script | `content_scripts.js: ["lib/config.js", "lib/matching.js", "content.js"]` in manifest |
+| Service worker | `importScripts("lib/config.js", "lib/matching.js")` at top of `background.js`    |
+| Popup page     | `<script src="lib/config.js"></script>` then `popup.js` (no matching needed)     |
+| Options page   | `<script src="lib/config.js"></script><script src="lib/matching.js"></script>`   |
+| Node tests     | `require("../lib/matching.js")`; `config.js` loaded via `vm` with chrome stub.   |
+
+Both `lib/config.js` and `lib/matching.js` deliberately use **no ES module
+syntax** so they work in every loader type. `lib/matching.js` additionally
+exports via `module.exports` when running in Node, for the test suite.
+
+## 4. Storage model
+
+- A small pointer at `chrome.storage.local["storageArea"]` selects the
+  active area: `"local"` (default) or `"sync"`.
+- The actual config lives at `chrome.storage.<area>["config"]`.
+- All reads/writes go through `BTWConfig` in `lib/config.js`. Never call
+  `chrome.storage.sync.get` / `.set` / `.local.get` / `.local.set` for the
+  `config` key directly from anywhere else. Always go through the helper.
+- `BTWConfig.onConfigChanged(cb)` invokes `cb` whenever the active config
+  changes OR the area pointer flips - subscribe instead of listening to
+  `chrome.storage.onChanged` ad-hoc.
+- When the user toggles the storage area, `BTWConfig.setActiveAreaName`
+  migrates the existing config from the old area to the new one and
+  deletes it from the old. Quota errors (sync limit ~100 KB) must surface
+  to the UI and the toggle must revert.
+- On `chrome.runtime.onInstalled`:
+  - `reason === "install"`: pin pointer to `"local"`.
+  - `reason === "update"` and pointer unset: detect where the existing
+    config currently lives and pin to that area, so nothing silently
+    disappears for users upgrading from <= v1.4.0.
+
+### Storage threat model summary
+
+| Threat                                                       | Status |
+|--------------------------------------------------------------|--------|
+| Other extensions reading our config                          | Blocked (per-extension partitioning). |
+| Web pages reading our config via the extension API           | Blocked (no API access). |
+| Web pages reading the banner DOM                             | Blocked (closed shadow root). |
+| Web pages recovering terms from injected attributes          | Blocked (no `title=`, no `data-*` terms). |
+| Web pages enumerating highlighted text via `querySelectorAll`| Mitigated when markers off (CSS Highlight path, no DOM). Visible when markers on (small `__btw_mk__` spans). |
+| Local disk reads (other apps, malware, forensics)            | NOT protected. Browser extension storage is unencrypted at rest. |
+| Microsoft cloud sync (`storage.sync`)                        | NOT zero-knowledge. Off by default. |
+| Exported JSON file                                           | Plaintext. User responsibility. |
+
+### Not yet shipped (would be valuable later)
+
+- AES-GCM passphrase encryption (Web Crypto + PBKDF2). Session-prompted.
+- SHA-256 hash-only matching (removes plaintext from storage entirely).
+- A real Content Security Policy on the extension pages.
+
+## 5. Highlight engine
+
+Two paths, selected at runtime:
+
+1. **CSS Custom Highlight API path** - used when `cssHighlightsAvailable`
+   is true AND the user has disabled the ⚠️ markers
+   (`config.highlightMatches === false`). Paints highlights via
+   `CSS.highlights` over `Range` objects. **Zero DOM mutation** for the
+   matched text. The page cannot find matches via DOM queries.
+
+2. **Span wrapping path** - used in every other case (markers enabled, OR
+   browser without CSS Custom Highlight API). Wraps each match in
+   `<span class="__btw_hl__">...</span>` and, when markers are enabled,
+   appends `<span class="__btw_mk__">⚠️</span>` immediately after.
+   This path is the well-tested default that ships behaviour users expect.
+
+In both paths:
+- `highlight.add(range)` / `<span>` populates per-term bookkeeping so the
+  popup's **Jump** button can `scrollIntoView` (span path) or
+  `getBoundingClientRect + window.scrollTo` (CSS path) the Nth occurrence,
+  and flash it red.
+- Re-scanning is driven by a debounced `MutationObserver`
+  (childList + subtree + characterData on `document.body`) so SPAs,
+  lazy-loaded sections, and infinite scroll work. Added marker / highlight
+  spans are filtered out of the observer to prevent feedback loops.
+  Single-page-app route changes are caught by wrapping
+  `history.pushState` / `replaceState` and listening to `popstate`.
+
+### Forbidden zones (skip text nodes inside these)
+
+`SCRIPT`, `STYLE`, `NOSCRIPT`, `TEXTAREA`, `INPUT`, `SELECT`, `CODE`,
+`PRE`, `IFRAME`, `OBJECT`, `EMBED`, `SVG`, `CANVAS`, and anything inside
+`contenteditable`. Also our own shadow host (`__btw_shadow_host__`),
+highlight spans, and marker spans.
+
+## 6. Regex / matching rules
+
+- All matching helpers live in **`lib/matching.js`** (`BTWMatching`). They
+  are pure functions, deterministic, side-effect free, and are exercised
+  by `test/matching.test.js`.
+- Terms are de-duplicated case-insensitively (when matching is
+  case-insensitive) and sorted **longest first** before being joined with
+  `|`. This guarantees `"BAE Systems"` wins over `"BAE"` (JS regex
+  alternation is leftmost-first, not longest-first).
+- `wholeWordOnly` wraps the alternation in `\b...\b`. Acknowledged limit:
+  `\b` is ASCII-only. Replacing with `(?<![\p{L}\p{N}])...(?![\p{L}\p{N}])`
+  is a future improvement for non-Latin scripts.
+- Match counting buckets by the case-folded term key, so `"BAE"` and
+  `"bae"` count together when case-insensitive matching is on.
+- `hostMatches`: a hostname matches a pattern when the host **equals** the
+  pattern OR ends with `"." + pattern`. The previous `.includes()` fallback
+  was removed in v1.5.0 - it was a security footgun (a pattern of `google`
+  matched `evil-google.com`). Do not re-add it.
+- `sanitizeImportedConfig` enforces a strict allowlist on imported JSON
+  configs: unknown top-level keys are dropped, non-string terms are
+  rejected, URL-like garbage in hostnames is rejected, and hard caps
+  (`LIMITS` constant) prevent absurd term/host/rule counts. The options
+  page also caps file imports at 1 MiB.
+
+## 7. Popup, options, badge
+
+- Popup shows the per-term match list for the active tab, with a Jump
+  button that cycles through occurrences (`1/3`, `2/3`, ...).
+- The popup talks to the active tab's content script via
+  `chrome.tabs.sendMessage({ type: "getMatches" | "scrollToMatch" |
+  "rescanNow" })`. If the content script is missing (e.g. on a page that
+  loaded before the extension was installed), Rescan re-injects it via
+  `chrome.scripting.executeScript`.
+- The toolbar badge is set by the background service worker when it
+  receives `{ type: "scanResult" }` from the content script. Badge is
+  cleared on every navigation start.
+- Options page exposes: enabled / case sensitive / whole words only /
+  highlight markers / storage area radio / global terms / disabled hosts /
+  per-site rules / Export+Import JSON.
+
+## 8. Versioning and release
+
+- Versions are **semver** in `manifest.json`. The version there is the
+  single source of truth.
+- Tags are `vX.Y.Z` and **must** match `manifest.json` exactly. The
+  release workflow fails if they disagree.
+- Every behaviour change ships in its own version bump and Release.
+  Trivial README-only edits do not require a bump.
+- Tag pushes trigger `.github/workflows/release.yml`, which:
+  1. Resolves version from the tag (or `workflow_dispatch` input).
+  2. Verifies it matches `manifest.json`.
+  3. `rsync`s a clean staging tree excluding `.git`, `.github`, `dist`,
+     `staging`, `README.md`, `LICENSE`, `.gitignore`.
+  4. Zips to `dist/edge-banned-terms-warning-<version>.zip`.
+  5. Generates a `.zip.sha256` checksum.
+  6. Creates a GitHub Release with both files, install instructions, and
+     auto-generated changelog notes.
+- `.github/workflows/validate.yml` runs on every push/PR: validates the
+  manifest, `node --check`s every JS file (including `lib/config.js`),
+  and dry-runs the packaging.
+
+### Releasing a new version
+
+```bash
+# 1. Edit manifest.json -> bump "version"
+# 2. Edit code / docs
+git add -A
+git commit -m "Release vX.Y.Z: <one-line summary>"
+git tag vX.Y.Z
+git push origin main --tags
+# Release workflow runs automatically. Wait for it, verify the assets
+# appear on the Releases page.
+```
+
+Or run **Actions -> Release Extension -> Run workflow** and supply the
+version.
+
+### Update instructions communicated to users
+
+1. Download `edge-banned-terms-warning-<version>.zip` from the GitHub
+   Release.
+2. Extract over the existing extension folder.
+3. Open `edge://extensions/`, click the reload (↻) icon on the extension
+   card.
+
+## 9. Update + migration discipline
+
+- Never change the shape of `config` without writing a migration that
+  fills in defaults for missing fields.
+- `BTWConfig.getConfig()` always returns either `null` or the saved
+  object. Callers `Object.assign({}, BTWMatching.DEFAULT_CONFIG, config || {})`
+  so older shapes still work.
+- **Single source of truth for defaults**: `BTWMatching.DEFAULT_CONFIG`
+  (frozen) in `lib/matching.js`. `background.js` seeds first-install
+  storage with it; `options.js` back-fills the form with it;
+  `sanitizeImportedConfig` validates against it.
+- When the storage area changes, every consumer must re-read via
+  `BTWConfig.getConfig()` (already wired via `onConfigChanged`).
+
+## 10. Coding conventions
+
+- Pure ES2020 vanilla JS. No transpilation.
+- Use `\uXXXX` literals for emoji in source (`"\u26A0\uFE0F"`) to avoid
+  encoding surprises across editors and CI runners.
+- Inline `Object.assign(el.style, {...})` instead of CSS string concat -
+  easier to read in 280-char popup widths.
+- Defensive: every async function that touches storage should tolerate
+  `null` / `undefined`.
+- Wrap `chrome.runtime.sendMessage` in `try {}` - it throws when no
+  receiver is registered (common on tabs the content script doesn't run
+  on, e.g. `chrome://` pages).
+- Public IDs / class names on injected DOM use the `__btw_*` prefix.
+  Never include the configured term in the DOM as data.
+
+## 11. Edge Add-ons store (not yet submitted)
+
+If/when we publish to the official store:
+
+- Register a (free) developer account at Partner Center.
+- Provide a privacy policy URL (required because of `<all_urls>` host
+  permission). It must state: "no data is collected or transmitted; all
+  configuration stays in the browser's local extension storage".
+- Reviewer notes must explain `<all_urls>` (needed to scan every page's
+  visible text against the user-configured banned terms).
+- Store listing assets: 300×300 logo, ≥1 screenshot 1280×800.
+- Bump `manifest.json` version for every submission - duplicate versions
+  are rejected.
+- After acceptance, link the store page from the README and add a
+  one-click install option above the developer-mode instructions.
+
+## 12. Branding / wording
+
+- Browser-vendor-agnostic where possible. Prefer "your browser account"
+  over "your Microsoft account" in user-facing text, because the same
+  package runs in Chrome / Brave / Edge.
+- Lead with **local-first / privacy-first** in the README. `storage.sync`
+  is described as opt-in, never as the default.
+- Badges: Validate + Release workflow badges are served by GitHub directly
+  and are reliable. The "latest release" badge uses **badgen.net**, not
+  shields.io, because shields.io periodically returns "Unable to select
+  next GitHub token from pool" when their auth pool is exhausted.
+
+## 13. Open follow-ups
+
+These are valuable, not yet built:
+
+1. **`block` severity per rule** - interstitial page with Back / Continue.
+2. **Regex support via `re:` prefix** on individual terms.
+3. **Right-click "Add selection to banned terms"** context-menu.
+4. **Unicode word boundaries** for `wholeWordOnly`.
+5. **AES-GCM passphrase encryption** of the stored config.
+6. **Hash-only matching** (SHA-256 of each term).
+7. **Edge Add-ons store submission**.
+8. **Subresource Integrity / signed releases** (cosign / Sigstore).
+
+## 14. Security hardening shipped in v1.5.0
+
+These are the cross-cutting changes that landed together; do not regress
+them without an explicit conversation.
+
+- Strict **Content Security Policy** on extension pages
+  (`script-src 'self'; object-src 'none'; base-uri 'none';
+  frame-ancestors 'none'; form-action 'none'`).
+- `minimum_chrome_version: "111"` to guarantee the CSS Custom Highlight
+  API and other modern primitives are present.
+- Pure helpers extracted to **`lib/matching.js`** and unit tested.
+- **`sanitizeImportedConfig`** strict allowlist + size caps for imported
+  JSON; 1 MiB file-size cap in the options page.
+- **`hostMatches` substring-fallback removed** - it matched
+  `evil-google.com` against `google`.
+- **`renderRule` in options.js** rewritten with `createElement` /
+  `textContent` only; no `innerHTML` templating.
+- **Service-worker message handler** checks `sender.id === chrome.runtime.id`
+  and `sender.tab` before acting; ignores anything else.
+- **`lib/config.js` comment** corrected to match the code's local-first
+  default.
+- **GitHub Actions pinned by commit SHA** (not moving tags),
+  `step-security/harden-runner` audits egress, **`permissions:
+  contents: write`** only on release (read-only on validate/codeql),
+  workflows have `timeout-minutes`, the release script validates the
+  version with a regex before string-substituting it.
+- **Dependabot** configured for weekly Action updates.
+- **CodeQL** JavaScript SAST workflow added (push + PR + weekly cron).
+
+## 15. What an agent should do before committing
+
+1. `node --test test/` - all tests must pass.
+2. `node --check` every modified `.js` file.
+3. Load the extension via **Load unpacked** in Edge and confirm:
+   - Banner appears on a known-bad page.
+   - Inline ⚠️ marker appears beside each match (when markers enabled).
+   - Popup match list populates; **Jump** scrolls and flashes.
+   - Toggling storage area in Settings migrates config and the popup
+     still shows matches afterwards.
+   - `edge://extensions/` shows no console errors from background or
+     content script.
+3. Bump `manifest.json` version if behaviour changed.
+4. Update README / AGENTS.md if the user-facing model or developer
+   workflow changed.
+5. Commit with a clear, scoped message; tag and push when ready to ship.
