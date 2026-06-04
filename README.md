@@ -128,10 +128,12 @@ The Settings page lets you choose:
 
 | Storage | Cross-device sync | Visible to Microsoft (cloud) | Quota |
 |---|---|---|---|
-| `chrome.storage.sync` (default) | Yes (via your MS account) | Yes - TLS in transit, MS-encrypted at rest, but **MS holds the key** | ~100 KB total, 8 KB per item |
-| `chrome.storage.local` | No | No - never leaves the device | ~10 MB |
+| `chrome.storage.local` (default) | No | No - never leaves the device | ~10 MB |
+| `chrome.storage.sync` | Yes (via your MS account) | Yes - TLS in transit, MS-encrypted at rest, but **MS holds the key** | ~100 KB total, 8 KB per item |
 
 Switching areas in Settings migrates your existing configuration automatically. If you have a large config saved in `local` and switch back to `sync`, the move can fail with a quota error - the UI will report it and revert.
+
+> New installs default to `local`. If you are upgrading from v1.4.0 or earlier, the extension keeps using whichever area already held your config so nothing changes silently.
 
 ### Further hardening not yet shipped
 

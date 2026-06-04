@@ -11,7 +11,25 @@ const DEFAULT_CONFIG = {
   disabledHosts: []
 };
 
-chrome.runtime.onInstalled.addListener(async () => {
+chrome.runtime.onInstalled.addListener(async (details) => {
+  // Pin the storage area pointer so the new local-default doesn't silently
+  // hide an existing sync config from users upgrading from <= v1.4.0.
+  const ptr = await chrome.storage.local.get("storageArea");
+  if (!ptr.storageArea) {
+    if (details && details.reason === "update") {
+      const inSync = await chrome.storage.sync.get("config");
+      const inLocal = await chrome.storage.local.get("config");
+      if (inSync.config && !inLocal.config) {
+        await chrome.storage.local.set({ storageArea: "sync" });
+      } else {
+        await chrome.storage.local.set({ storageArea: "local" });
+      }
+    } else {
+      // Fresh install: default to local for privacy.
+      await chrome.storage.local.set({ storageArea: "local" });
+    }
+  }
+
   const existing = await BTWConfig.getConfig();
   if (!existing) {
     await BTWConfig.setConfig(DEFAULT_CONFIG);
