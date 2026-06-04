@@ -4,23 +4,41 @@
   if (window.__bannedTermsScanRan) return;
   window.__bannedTermsScanRan = true;
 
-  const BANNER_ID = "__banned-terms-warning-banner__";
-  const HIGHLIGHT_CLASS = "__banned-terms-highlight__";
-  const MARKER_CLASS = "__banned-terms-marker__";
+  const HIGHLIGHT_CLASS = "__btw_hl__";
+  const MARKER_CLASS = "__btw_mk__";
+  const SHADOW_HOST_ID = "__btw_shadow_host__";
   const SKIP_TAGS = new Set([
     "SCRIPT", "STYLE", "NOSCRIPT", "TEXTAREA", "INPUT", "SELECT",
     "CODE", "PRE", "IFRAME", "OBJECT", "EMBED", "SVG", "CANVAS"
   ]);
 
-  // Module state - kept across mutations so we don't repeatedly read storage.
+  // Term -> short opaque id used in DOM attributes so that page scripts
+  // reading our injected spans can't recover the original banned term list.
+  const termIds = new Map();    // term -> id
+  const idToTerm = new Map();   // id -> term
+  let nextId = 1;
+  function idForTerm(t) {
+    if (termIds.has(t)) return termIds.get(t);
+    const id = "t" + (nextId++);
+    termIds.set(t, id);
+    idToTerm.set(id, t);
+    return id;
+  }
+
+  // Highlights array kept in document order so the popup can jump through them.
+  const highlightOrder = [];    // each entry: { el, term }
+
   let state = {
     config: null,
-    regex: null,           // regex used for highlighting (no /g state issues per-node)
+    regex: null,
     terms: [],
-    matchCounts: new Map(),// term -> total count seen so far on this page
+    matchCounts: new Map(),
     observer: null,
     rescanTimer: null,
     pendingNodes: new Set(),
+    shadowHost: null,
+    shadowRoot: null,
+    bannerDismissed: false,
   };
 
   function escapeRegex(s) {
@@ -40,9 +58,6 @@
       .map((t) => (t == null ? "" : String(t).trim()))
       .filter(Boolean);
     if (cleaned.length === 0) return null;
-    // De-duplicate (case-insensitively when matching is case-insensitive) and
-    // sort longest-first so alternation prefers the most specific match,
-    // e.g. "BAE Systems" wins over "BAE".
     const seen = new Set();
     const unique = [];
     for (const t of cleaned) {
@@ -67,7 +82,7 @@
   function shouldSkipElement(el) {
     while (el && el.nodeType === 1) {
       if (SKIP_TAGS.has(el.tagName)) return true;
-      if (el.id === BANNER_ID) return true;
+      if (el.id === SHADOW_HOST_ID) return true;
       if (el.classList && (el.classList.contains(HIGHLIGHT_CLASS) || el.classList.contains(MARKER_CLASS))) return true;
       if (el.isContentEditable) return true;
       el = el.parentNode;
@@ -75,69 +90,84 @@
     return false;
   }
 
+  function ensureShadow() {
+    if (state.shadowHost && state.shadowRoot) return;
+    const host = document.createElement("div");
+    host.id = SHADOW_HOST_ID;
+    // Style only the host position - the inner UI lives inside a closed shadow root.
+    Object.assign(host.style, {
+      position: "fixed", top: "0", left: "0", right: "0",
+      zIndex: "2147483647", pointerEvents: "none"
+    });
+    document.documentElement.appendChild(host);
+    // closed mode: page scripts cannot access .shadowRoot
+    const root = host.attachShadow({ mode: "closed" });
+    const style = document.createElement("style");
+    style.textContent = `
+      .banner {
+        all: initial;
+        pointer-events: auto;
+        display: flex; align-items: center; gap: 12px;
+        background: #c0392b; color: #fff;
+        font: 14px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        padding: 10px 14px;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+      }
+      .icon { font-weight: 700; font-size: 16px; }
+      .msg { flex: 1; }
+      button {
+        background: rgba(255,255,255,0.15); color: #fff;
+        border: 1px solid rgba(255,255,255,0.6);
+        padding: 4px 10px; cursor: pointer; border-radius: 3px;
+        font: inherit;
+      }
+    `;
+    root.appendChild(style);
+    state.shadowHost = host;
+    state.shadowRoot = root;
+  }
+
   function removeBanner() {
-    const existing = document.getElementById(BANNER_ID);
-    if (existing) existing.remove();
+    if (state.shadowRoot) {
+      const b = state.shadowRoot.querySelector(".banner");
+      if (b) b.remove();
+    }
   }
 
   function removeHighlights() {
     document.querySelectorAll("." + HIGHLIGHT_CLASS).forEach((el) => {
       const parent = el.parentNode;
       if (!parent) return;
-      parent.replaceChild(document.createTextNode(el.dataset.originalText || el.textContent || ""), el);
+      parent.replaceChild(document.createTextNode(el.textContent || ""), el);
       parent.normalize();
     });
     document.querySelectorAll("." + MARKER_CLASS).forEach((el) => el.remove());
+    highlightOrder.length = 0;
   }
 
   function showBanner() {
+    if (state.bannerDismissed) return;
     const matches = Array.from(state.matchCounts.entries()).map(([term, count]) => ({ term, count }));
-    if (matches.length === 0) {
-      removeBanner();
-      return;
-    }
+    if (matches.length === 0) { removeBanner(); return; }
+    ensureShadow();
     removeBanner();
-    if (!document.body) return;
-
     const total = matches.reduce((a, b) => a + b.count, 0);
     const summary = matches.slice(0, 8).map((m) => `"${m.term}" (${m.count})`).join(", ");
     const more = matches.length > 8 ? `, +${matches.length - 8} more` : "";
 
     const wrap = document.createElement("div");
-    wrap.id = BANNER_ID;
+    wrap.className = "banner";
     wrap.setAttribute("role", "alert");
-    Object.assign(wrap.style, {
-      position: "fixed", top: "0", left: "0", right: "0",
-      zIndex: "2147483647",
-      background: "#c0392b", color: "#fff",
-      font: "14px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-      padding: "10px 14px",
-      boxShadow: "0 2px 6px rgba(0,0,0,0.3)",
-      display: "flex", alignItems: "center", gap: "12px"
-    });
-
     const icon = document.createElement("span");
-    icon.textContent = "⚠️";
-    icon.style.fontWeight = "700";
-    icon.style.fontSize = "16px";
-
+    icon.className = "icon"; icon.textContent = "\u26A0\uFE0F";
     const text = document.createElement("span");
-    text.style.flex = "1";
+    text.className = "msg";
     text.textContent = `Banned content warning: ${total} match${total === 1 ? "" : "es"} found - ${summary}${more}`;
-
     const close = document.createElement("button");
     close.textContent = "Dismiss";
-    Object.assign(close.style, {
-      background: "rgba(255,255,255,0.15)", color: "#fff",
-      border: "1px solid rgba(255,255,255,0.6)",
-      padding: "4px 10px", cursor: "pointer", borderRadius: "3px", font: "inherit"
-    });
-    close.addEventListener("click", removeBanner);
-
-    wrap.appendChild(icon);
-    wrap.appendChild(text);
-    wrap.appendChild(close);
-    document.body.appendChild(wrap);
+    close.addEventListener("click", () => { state.bannerDismissed = true; removeBanner(); });
+    wrap.appendChild(icon); wrap.appendChild(text); wrap.appendChild(close);
+    state.shadowRoot.appendChild(wrap);
   }
 
   function sendMatches() {
@@ -147,12 +177,10 @@
     } catch (e) { /* ignore */ }
   }
 
-  // Walk text nodes under `root` and highlight matches. Returns true if any new matches added.
   function highlightUnder(root) {
     if (!state.regex || !root) return false;
     if (root.nodeType === 1 && shouldSkipElement(root)) return false;
 
-    // If root is a text node, handle directly.
     const textNodes = [];
     if (root.nodeType === 3) {
       if (root.nodeValue && root.nodeValue.trim() && !shouldSkipElement(root.parentNode)) {
@@ -168,14 +196,11 @@
       });
       let n;
       while ((n = walker.nextNode())) textNodes.push(n);
-    } else {
-      return false;
-    }
+    } else { return false; }
 
     let changed = false;
     for (const textNode of textNodes) {
       const text = textNode.nodeValue;
-      // Reset regex state per node.
       state.regex.lastIndex = 0;
       if (!state.regex.test(text)) continue;
       state.regex.lastIndex = 0;
@@ -188,9 +213,12 @@
         const end = start + m[0].length;
         if (start > last) frag.appendChild(document.createTextNode(text.slice(last, start)));
 
+        // Bucket by case-insensitive term key for counting/jumping consistency.
+        const termKey = (state.config && state.config.caseSensitive) ? m[0] : m[0].toLowerCase();
+
         const mark = document.createElement("span");
         mark.className = HIGHLIGHT_CLASS;
-        mark.dataset.originalText = m[0];
+        mark.setAttribute("data-btw", idForTerm(termKey));
         mark.textContent = m[0];
         Object.assign(mark.style, {
           backgroundColor: "#fff3a3", color: "#000",
@@ -198,28 +226,29 @@
           boxShadow: "0 0 0 1px #c0392b inset"
         });
         frag.appendChild(mark);
+        highlightOrder.push({ el: mark, term: termKey });
 
         if (state.config && state.config.highlightMatches !== false) {
           const marker = document.createElement("span");
           marker.className = MARKER_CLASS;
-          marker.textContent = "⚠️";
-          marker.title = `Banned term: ${m[0]}`;
+          marker.textContent = "\u26A0\uFE0F";
+          // No `title=` and no data attributes carrying the term, to avoid
+          // letting page scripts harvest the configured banned word list.
           Object.assign(marker.style, {
             display: "inline-block", marginLeft: "2px",
             fontSize: "0.9em", lineHeight: "1",
-            verticalAlign: "baseline", textDecoration: "none"
+            verticalAlign: "baseline"
           });
           frag.appendChild(marker);
         }
 
-        state.matchCounts.set(m[0], (state.matchCounts.get(m[0]) || 0) + 1);
+        state.matchCounts.set(termKey, (state.matchCounts.get(termKey) || 0) + 1);
         changed = true;
 
         last = end;
         if (m.index === state.regex.lastIndex) state.regex.lastIndex++;
       }
       if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
-
       if (textNode.parentNode) textNode.parentNode.replaceChild(frag, textNode);
     }
     return changed;
@@ -237,10 +266,7 @@
         if (!n.isConnected) continue;
         if (highlightUnder(n)) changed = true;
       }
-      if (changed) {
-        showBanner();
-        sendMatches();
-      }
+      if (changed) { showBanner(); sendMatches(); }
     }, 250);
   }
 
@@ -251,9 +277,8 @@
       for (const mut of mutations) {
         if (mut.type === "childList") {
           mut.addedNodes.forEach((n) => {
-            // Avoid reacting to our own injected nodes.
             if (n.nodeType === 1) {
-              if (n.id === BANNER_ID) return;
+              if (n.id === SHADOW_HOST_ID) return;
               if (n.classList && (n.classList.contains(HIGHLIGHT_CLASS) || n.classList.contains(MARKER_CLASS))) return;
             }
             scheduleRescan(n);
@@ -265,18 +290,11 @@
         }
       }
     });
-    state.observer.observe(document.body, {
-      childList: true,
-      subtree: true,
-      characterData: true
-    });
+    state.observer.observe(document.body, { childList: true, subtree: true, characterData: true });
   }
 
   function stopObserver() {
-    if (state.observer) {
-      state.observer.disconnect();
-      state.observer = null;
-    }
+    if (state.observer) { state.observer.disconnect(); state.observer = null; }
   }
 
   function reset() {
@@ -285,6 +303,8 @@
     removeHighlights();
     state.matchCounts = new Map();
     state.pendingNodes.clear();
+    state.bannerDismissed = false;
+    termIds.clear(); idToTerm.clear(); nextId = 1;
     if (state.rescanTimer) { clearTimeout(state.rescanTimer); state.rescanTimer = null; }
   }
 
@@ -318,52 +338,68 @@
     state.terms = terms;
     state.regex = regex;
 
-    // Initial pass over whatever is currently in the DOM.
     if (document.body) highlightUnder(document.body);
     showBanner();
     sendMatches();
-
-    // Watch for future DOM changes (SPA route, lazy-loaded sections, etc.).
     startObserver();
   }
 
-  // Hook SPA navigations (pushState/replaceState don't fire popstate).
+  // ---- Popup messaging ----
+  function flashElement(el) {
+    if (!el) return;
+    const prev = el.style.boxShadow;
+    el.style.boxShadow = "0 0 0 3px #c0392b";
+    setTimeout(() => { el.style.boxShadow = prev || "0 0 0 1px #c0392b inset"; }, 1500);
+  }
+
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (!msg || !msg.type) return;
+    if (msg.type === "getMatches") {
+      const matches = Array.from(state.matchCounts.entries()).map(([term, count]) => ({ term, count }));
+      sendResponse({ matches, total: matches.reduce((a, b) => a + b.count, 0) });
+      return true;
+    }
+    if (msg.type === "scrollToMatch") {
+      // term is the lowercased key (or original if caseSensitive). index is which occurrence.
+      const term = msg.term;
+      const occurrences = highlightOrder.filter((x) => x.term === term);
+      if (occurrences.length === 0) { sendResponse({ ok: false }); return true; }
+      const idx = ((msg.index || 0) % occurrences.length + occurrences.length) % occurrences.length;
+      const target = occurrences[idx].el;
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
+      flashElement(target);
+      sendResponse({ ok: true, count: occurrences.length, index: idx });
+      return true;
+    }
+    if (msg.type === "rescanNow") {
+      run().then(() => sendResponse({ ok: true }));
+      return true;
+    }
+  });
+
+  // SPA hooks
   function hookHistory() {
     const fire = () => window.dispatchEvent(new Event("__bannedTermsLocationChange"));
     const wrap = (name) => {
       const orig = history[name];
       if (!orig || orig.__bannedTermsWrapped) return;
-      const wrapped = function () {
-        const r = orig.apply(this, arguments);
-        fire();
-        return r;
-      };
+      const wrapped = function () { const r = orig.apply(this, arguments); fire(); return r; };
       wrapped.__bannedTermsWrapped = true;
       history[name] = wrapped;
     };
-    wrap("pushState");
-    wrap("replaceState");
+    wrap("pushState"); wrap("replaceState");
     window.addEventListener("popstate", fire);
-
     let lastUrl = location.href;
     window.addEventListener("__bannedTermsLocationChange", () => {
-      if (location.href !== lastUrl) {
-        lastUrl = location.href;
-        // Give the SPA a tick to render the new view.
-        setTimeout(run, 100);
-      }
+      if (location.href !== lastUrl) { lastUrl = location.href; setTimeout(run, 100); }
     });
   }
 
-  // Re-scan on config changes.
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === "sync" && changes.config) run();
   });
 
-  function start() {
-    hookHistory();
-    run();
-  }
+  function start() { hookHistory(); run(); }
 
   if (document.readyState === "complete" || document.readyState === "interactive") {
     start();
@@ -371,15 +407,9 @@
     window.addEventListener("DOMContentLoaded", start, { once: true });
   }
 
-  // Catch the "page kept loading after idle" case.
   window.addEventListener("load", () => {
-    // If we already have matches, the observer will pick up further changes.
-    // If we don't, do one more pass over the whole body in case content arrived between idle and load.
     if (state.regex && document.body && state.matchCounts.size === 0) {
-      if (highlightUnder(document.body)) {
-        showBanner();
-        sendMatches();
-      }
+      if (highlightUnder(document.body)) { showBanner(); sendMatches(); }
     }
   });
 })();

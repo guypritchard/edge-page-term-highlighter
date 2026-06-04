@@ -5,14 +5,60 @@ async function getConfig() {
 async function setConfig(config) {
   await chrome.storage.sync.set({ config });
 }
-
 async function currentTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   return tab;
 }
-
 function hostnameOf(url) {
   try { return new URL(url).hostname; } catch { return ""; }
+}
+
+async function askTab(tabId, msg) {
+  try {
+    return await chrome.tabs.sendMessage(tabId, msg);
+  } catch (e) {
+    return null;
+  }
+}
+
+// Per-term step counter so repeated clicks cycle through occurrences.
+const stepByTerm = new Map();
+
+function renderMatches(matches, tabId) {
+  const wrap = document.getElementById("matchList");
+  wrap.innerHTML = "";
+  if (!matches || matches.length === 0) {
+    wrap.innerHTML = '<div class="none">No matches.</div>';
+    return;
+  }
+  // Sort by count desc.
+  matches.sort((a, b) => b.count - a.count);
+  for (const m of matches) {
+    const row = document.createElement("div");
+    row.className = "match";
+    const term = document.createElement("span");
+    term.className = "term";
+    term.textContent = m.term;
+    const count = document.createElement("span");
+    count.className = "count";
+    count.textContent = String(m.count);
+    const btn = document.createElement("button");
+    btn.textContent = "Jump";
+    btn.title = "Scroll to the next occurrence on the page";
+    btn.addEventListener("click", async () => {
+      const next = (stepByTerm.get(m.term) || 0);
+      stepByTerm.set(m.term, next + 1);
+      const res = await askTab(tabId, { type: "scrollToMatch", term: m.term, index: next });
+      if (res && res.ok) {
+        btn.textContent = `${res.index + 1}/${res.count}`;
+        setTimeout(() => { btn.textContent = "Jump"; }, 1500);
+      }
+    });
+    row.appendChild(term);
+    row.appendChild(count);
+    row.appendChild(btn);
+    wrap.appendChild(row);
+  }
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -28,8 +74,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   hostInfo.textContent = host ? `Site: ${host}` : "";
 
   const disabledHosts = config.disabledHosts || [];
-  const isDisabledHere = disabledHosts.includes(host);
-  toggleHostBtn.textContent = isDisabledHere ? "Enable on this site" : "Disable on this site";
+  toggleHostBtn.textContent = disabledHosts.includes(host) ? "Enable on this site" : "Disable on this site";
 
   enabledEl.addEventListener("change", async () => {
     const c = await getConfig();
@@ -49,18 +94,23 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   document.getElementById("rescan").addEventListener("click", async () => {
     if (!tab?.id) return;
-    await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: () => { window.__bannedTermsScanRan = false; },
-    });
-    await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      files: ["content.js"],
-    });
-    window.close();
+    // Try messaging first (cheap). If the content script isn't present, re-inject.
+    let res = await askTab(tab.id, { type: "rescanNow" });
+    if (!res) {
+      await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: () => { window.__bannedTermsScanRan = false; } });
+      await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content.js"] });
+    }
+    // Refresh popup match list.
+    const data = await askTab(tab.id, { type: "getMatches" });
+    renderMatches(data?.matches || [], tab.id);
   });
 
   document.getElementById("options").addEventListener("click", () => {
     chrome.runtime.openOptionsPage();
   });
+
+  if (tab?.id) {
+    const data = await askTab(tab.id, { type: "getMatches" });
+    renderMatches(data?.matches || [], tab.id);
+  }
 });

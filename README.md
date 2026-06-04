@@ -94,10 +94,51 @@ You can paste this directly into the **Import JSON** button on the Settings page
 
 ## How it works
 
-- A content script runs at `document_idle` on every page, reads `document.body.innerText`, and tests it against a single combined regex built from your global terms plus any matching per-site rule terms.
-- If matches are found, a fixed-position red banner is injected at the top of the page (and removed on user click).
-- The background service worker sets the toolbar badge to the total number of distinct matched terms for that tab.
-- Configuration is read from `chrome.storage.sync`; changes take effect on the next page load (or click **Rescan tab** in the popup).
+- A content script runs at `document_idle` on every page, walks text nodes under `<body>`, and wraps each match in a highlight span with a ⚠️ marker.
+- A `MutationObserver` re-scans newly added subtrees as the page loads/changes (SPAs, infinite scroll, lazy-loaded content). `pushState`/`replaceState`/`popstate` trigger a full re-scan.
+- The banner is rendered inside a **closed Shadow DOM** so page scripts cannot read it via `document.querySelector`.
+- Configuration is read from `chrome.storage.sync`; changes take effect immediately on the next render pass.
+
+---
+
+## Security model
+
+This extension stores your banned-terms list in your browser's extension storage and injects highlight markers into web pages. Here is what is and isn't protected.
+
+### Protected against
+
+- **Other extensions reading your config.** Each extension's storage is partitioned by extension ID.
+- **Web pages reading the extension API.** Pages cannot access `chrome.storage`.
+- **Web pages reading the warning banner.** The banner is rendered inside a **closed shadow root** (`mode: "closed"`), so `document.querySelector` / `getRootNode()` on the host element returns nothing.
+- **Web pages recovering the configured term list from injected markers.** Highlight spans carry an opaque per-session id (e.g. `data-btw="t3"`) instead of the original term. No `title=` tooltip and no `data-original-text` attribute is set. The text inside the highlight is just the matched substring that already exists in the page.
+
+### Residual risks (the page can still learn)
+
+- **Which words on the page were highlighted.** The highlight span has a visible class (`__btw_hl__`) and a background colour. A determined page script can scan for them. The matched text was already on the page, so the only new fact leaked is *that you flagged it*.
+- The configured *list* of terms is not exposed - only those that happen to match the current page.
+
+### Local-machine threats
+
+- **Anyone with access to your Edge profile** (other apps you run, malware, forensic tools, an admin with disk access) can read the LevelDB store under `%LOCALAPPDATA%\Microsoft\Edge\User Data\Default\Local Extension Settings\<extension id>\`. Browser extension storage is not encrypted at rest.
+- **DevTools** on your own machine can read everything by design.
+- **Exported JSON** is plaintext on disk - treat it like any other secret.
+
+### Cloud sync (`chrome.storage.sync`)
+
+- Your config syncs across devices via your Microsoft account.
+- Microsoft encrypts in transit (TLS) and at rest, but Microsoft holds the key (not zero-knowledge).
+- If you do not want cloud sync, the simplest mitigation today is **Export your config to a file, then clear the extension's storage** and rely on manual Import on other devices.
+
+### Hardening options not yet enabled
+
+If your threat model demands more, these are reasonable extensions to add:
+
+1. **Local-only storage** (`chrome.storage.local`) - never leaves the device. Trades cross-device sync for privacy.
+2. **Passphrase-encrypted config** - AES-GCM with a PBKDF2-derived key, prompted on session start. Lose the passphrase, lose the config.
+3. **Hash-only matching** - store SHA-256 hashes of each term and match by hashing tokenised words from the page. Removes plaintext from storage entirely at the cost of phrase/regex flexibility.
+4. **CSS Custom Highlight API** - paint highlights via `CSS.highlights` instead of DOM mutation. Removes the visible class entirely (no DOM-side leakage at all).
+
+Open an issue if you want any of these prioritised.
 
 ---
 
