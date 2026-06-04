@@ -2,7 +2,7 @@
 
 [![Validate](https://github.com/guypritchard/edge-banned-terms-warning/actions/workflows/validate.yml/badge.svg)](https://github.com/guypritchard/edge-banned-terms-warning/actions/workflows/validate.yml)
 [![Release](https://github.com/guypritchard/edge-banned-terms-warning/actions/workflows/release.yml/badge.svg)](https://github.com/guypritchard/edge-banned-terms-warning/actions/workflows/release.yml)
-[![Latest Release](https://img.shields.io/github/v/release/guypritchard/edge-banned-terms-warning?display_name=tag&sort=semver)](https://github.com/guypritchard/edge-banned-terms-warning/releases/latest)
+[![Latest Release](https://badgen.net/github/release/guypritchard/edge-banned-terms-warning/stable)](https://github.com/guypritchard/edge-banned-terms-warning/releases/latest)
 
 A Microsoft Edge / Chromium browser extension (Manifest V3) that scans the visible text of every page you load and shows a red ⚠️ warning banner at the top when any of your configured **banned terms** appear. Supports **global terms**, **per-site rules**, and **per-site disabling**.
 
