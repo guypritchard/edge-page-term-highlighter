@@ -48,7 +48,7 @@ jobs:
           done
 
       - name: Run unit tests
-        run: node --test test/
+        run: node --test test/*.test.js
 
       - name: Dry-run package
         run: |

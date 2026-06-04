@@ -67,7 +67,7 @@ jobs:
 
       - name: Run unit tests
         shell: bash
-        run: node --test test/
+        run: node --test test/*.test.js
 
       - name: Package extension
         id: pkg

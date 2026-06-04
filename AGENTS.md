@@ -351,7 +351,9 @@ them without an explicit conversation.
 
 ## 15. What an agent should do before committing
 
-1. `node --test test/` - all tests must pass.
+1. `node --test test/*.test.js` - all tests must pass. (Don't use
+   `node --test test/` - Node 22.22+ interprets the bare directory as a
+   module path and fails.)
 2. `node --check` every modified `.js` file.
 3. Load the extension via **Load unpacked** in Edge and confirm:
    - Banner appears on a known-bad page.
