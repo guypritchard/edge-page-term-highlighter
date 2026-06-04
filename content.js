@@ -40,7 +40,19 @@
       .map((t) => (t == null ? "" : String(t).trim()))
       .filter(Boolean);
     if (cleaned.length === 0) return null;
-    const parts = cleaned.map(escapeRegex);
+    // De-duplicate (case-insensitively when matching is case-insensitive) and
+    // sort longest-first so alternation prefers the most specific match,
+    // e.g. "BAE Systems" wins over "BAE".
+    const seen = new Set();
+    const unique = [];
+    for (const t of cleaned) {
+      const key = caseSensitive ? t : t.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      unique.push(t);
+    }
+    unique.sort((a, b) => b.length - a.length);
+    const parts = unique.map(escapeRegex);
     let source = "(" + parts.join("|") + ")";
     if (wholeWordOnly) source = "\\b" + source + "\\b";
     const flags = "g" + (caseSensitive ? "" : "i");
