@@ -1,0 +1,17 @@
+# CODEOWNERS
+# Every PR will automatically request a review from the listed owners.
+# See https://docs.github.com/en/repositories/managing-your-repositories-settings-and-security/customizing-your-repository/about-code-owners
+
+# Default owner for everything in the repo.
+*                       @guypritchard
+
+# Tighter ownership for security-critical paths so any future
+# collaborators cannot self-merge changes to these files.
+/.github/               @guypritchard
+/.github/workflows/     @guypritchard
+/manifest.json          @guypritchard
+/background.js          @guypritchard
+/content.js             @guypritchard
+/lib/                   @guypritchard
+/SECURITY.md            @guypritchard
+/AGENTS.md              @guypritchard
