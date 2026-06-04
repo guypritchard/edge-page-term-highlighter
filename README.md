@@ -6,7 +6,7 @@
 
 A Microsoft Edge / Chromium browser extension (Manifest V3) that scans the visible text of every page you load and shows a red ⚠️ warning banner at the top when any of your configured **banned terms** appear. Supports **global terms**, **per-site rules**, and **per-site disabling**.
 
-> 100% local. No data leaves your browser. Configuration is stored in `chrome.storage.sync` and follows your Edge profile across devices.
+> 100% local by default. No data leaves your browser. Your configuration is stored on this device only; cross-device sync via your browser account is available as an opt-in.
 
 ---
 
@@ -99,7 +99,7 @@ You can paste this directly into the **Import JSON** button on the Settings page
   - Falls back to wrapping each match in a `<span>` on older engines.
 - A `MutationObserver` re-scans newly added subtrees as the page loads/changes (SPAs, infinite scroll, lazy-loaded content). `pushState`/`replaceState`/`popstate` trigger a full re-scan.
 - The banner is rendered inside a **closed Shadow DOM** so page scripts cannot read it via `document.querySelector`.
-- Configuration is loaded via the shared helper in `lib/config.js`, which reads from either `chrome.storage.sync` or `chrome.storage.local` depending on the user's choice.
+- Configuration is loaded via the shared helper in `lib/config.js`, which reads from the user's chosen storage area (local by default; opt-in browser sync).
 
 ---
 
@@ -122,18 +122,18 @@ This extension stores your banned-terms list in your browser's extension storage
 - **DevTools** on your own machine reads everything by design.
 - **Exported JSON** is plaintext on disk - treat it like any other secret.
 
-### Cloud sync (`chrome.storage.sync`) vs local (`chrome.storage.local`)
+### Storage
 
-The Settings page lets you choose:
+Your configuration is kept on this device only. The Settings page also offers an opt-in to browser sync if you want it to follow you across devices:
 
-| Storage | Cross-device sync | Visible to Microsoft (cloud) | Quota |
-|---|---|---|---|
-| `chrome.storage.local` (default) | No | No - never leaves the device | ~10 MB |
-| `chrome.storage.sync` | Yes (via your MS account) | Yes - TLS in transit, MS-encrypted at rest, but **MS holds the key** | ~100 KB total, 8 KB per item |
+| Storage | Default | Cross-device sync | Visible to the browser vendor (cloud) | Quota |
+|---|---|---|---|---|
+| Local (`chrome.storage.local`) | Yes | No - never leaves the device | No | ~10 MB |
+| Browser sync (`chrome.storage.sync`) | Opt-in | Yes (via your browser account) | Yes - TLS in transit, vendor-encrypted at rest, but the vendor holds the key | ~100 KB total, 8 KB per item |
 
-Switching areas in Settings migrates your existing configuration automatically. If you have a large config saved in `local` and switch back to `sync`, the move can fail with a quota error - the UI will report it and revert.
+Switching areas in Settings migrates your existing configuration automatically. If you move a large config from local to sync and exceed the quota, the UI reports the error and reverts.
 
-> New installs default to `local`. If you are upgrading from v1.4.0 or earlier, the extension keeps using whichever area already held your config so nothing changes silently.
+> New installs default to local storage. Upgrades from v1.4.0 or earlier keep using whichever area already held your config so nothing changes silently.
 
 ### Further hardening not yet shipped
 
