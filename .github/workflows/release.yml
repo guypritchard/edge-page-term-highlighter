@@ -1,0 +1,99 @@
+name: Release Extension
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g. 1.0.1). Must match manifest.json."
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Determine version
+        id: ver
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+            TAG="v${VERSION}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+            VERSION="${TAG#v}"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Resolved version=${VERSION} tag=${TAG}"
+
+      - name: Verify manifest version matches tag
+        shell: bash
+        run: |
+          MANIFEST_VERSION=$(node -p "require('./manifest.json').version")
+          echo "manifest.json version: ${MANIFEST_VERSION}"
+          echo "release version:       ${{ steps.ver.outputs.version }}"
+          if [ "${MANIFEST_VERSION}" != "${{ steps.ver.outputs.version }}" ]; then
+            echo "::error::manifest.json version (${MANIFEST_VERSION}) does not match release version (${{ steps.ver.outputs.version }})."
+            exit 1
+          fi
+
+      - name: Package extension
+        id: pkg
+        shell: bash
+        run: |
+          NAME="edge-banned-terms-warning-${{ steps.ver.outputs.version }}"
+          mkdir -p dist staging
+          # Stage only the files that belong in the extension package.
+          rsync -a \
+            --exclude '.git' \
+            --exclude '.github' \
+            --exclude 'dist' \
+            --exclude 'staging' \
+            --exclude 'README.md' \
+            --exclude 'LICENSE' \
+            --exclude '.gitignore' \
+            ./ staging/
+          (cd staging && zip -r "../dist/${NAME}.zip" .)
+          ls -la dist
+          echo "zip=dist/${NAME}.zip" >> "$GITHUB_OUTPUT"
+          echo "name=${NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate SHA256 checksum
+        shell: bash
+        run: |
+          cd dist
+          sha256sum "${{ steps.pkg.outputs.name }}.zip" > "${{ steps.pkg.outputs.name }}.zip.sha256"
+          cat "${{ steps.pkg.outputs.name }}.zip.sha256"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: ${{ steps.ver.outputs.tag }}
+          generate_release_notes: true
+          body: |
+            ## Install (Developer Mode)
+
+            1. Download `${{ steps.pkg.outputs.name }}.zip` from the Assets below.
+            2. Extract the zip to a folder you will keep (Edge loads the extension from disk).
+            3. Open Edge and go to `edge://extensions/`.
+            4. Toggle **Developer mode** on (bottom-left).
+            5. Click **Load unpacked** and select the extracted folder.
+            6. Pin the extension from the toolbar puzzle-piece menu.
+            7. Click the icon -> **Settings** to add banned terms and per-site rules.
+
+            See the [README](https://github.com/${{ github.repository }}#readme) for full configuration details.
+
+            **SHA256:** see `${{ steps.pkg.outputs.name }}.zip.sha256`.
+          files: |
+            dist/${{ steps.pkg.outputs.name }}.zip
+            dist/${{ steps.pkg.outputs.name }}.zip.sha256

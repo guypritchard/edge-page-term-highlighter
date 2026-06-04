@@ -1,0 +1,31 @@
+name: Validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate manifest.json
+        run: |
+          node -e "const m = require('./manifest.json'); if (m.manifest_version !== 3) { throw new Error('manifest_version must be 3'); } if (!m.version) { throw new Error('version missing'); } console.log('manifest OK, version', m.version);"
+
+      - name: Lint JS files (syntax check)
+        run: |
+          for f in background.js content.js popup.js options.js; do
+            echo "Checking $f"
+            node --check "$f"
+          done
+
+      - name: Dry-run package
+        run: |
+          mkdir -p staging
+          rsync -a --exclude '.git' --exclude '.github' --exclude 'staging' --exclude 'README.md' --exclude 'LICENSE' --exclude '.gitignore' ./ staging/
+          (cd staging && zip -r ../extension-preview.zip .)
+          ls -la extension-preview.zip
