@@ -16,7 +16,13 @@
     "CODE", "PRE", "IFRAME", "OBJECT", "EMBED", "SVG", "CANVAS"
   ]);
 
-  const useCSSHighlights = !!(window.CSS && CSS.highlights && window.Highlight);
+  // Use CSS Custom Highlight API only when the user has chosen no markers
+  // (pure-paint, no DOM mutation). When markers are enabled we fall back to
+  // span wrapping which gives stable, well-tested marker placement.
+  const cssHighlightsAvailable = !!(window.CSS && CSS.highlights && window.Highlight);
+  function shouldUseCSSPath() {
+    return cssHighlightsAvailable && !!state.config && state.config.highlightMatches === false;
+  }
 
   let highlight = null;
   let flashHighlight = null;
@@ -39,32 +45,9 @@
   };
 
   // ---------- regex/utilities ----------
-  function escapeRegex(s) {
-    return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  }
-  function hostMatches(host, pattern) {
-    if (!pattern) return false;
-    const h = host.toLowerCase();
-    const p = pattern.trim().toLowerCase();
-    if (!p) return false;
-    return h === p || h.endsWith("." + p) || h.includes(p);
-  }
-  function buildRegex(terms, { caseSensitive, wholeWordOnly }) {
-    const cleaned = (terms || []).map((t) => (t == null ? "" : String(t).trim())).filter(Boolean);
-    if (cleaned.length === 0) return null;
-    const seen = new Set(); const unique = [];
-    for (const t of cleaned) {
-      const key = caseSensitive ? t : t.toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key); unique.push(t);
-    }
-    unique.sort((a, b) => b.length - a.length);
-    let source = "(" + unique.map(escapeRegex).join("|") + ")";
-    if (wholeWordOnly) source = "\\b" + source + "\\b";
-    const flags = "g" + (caseSensitive ? "" : "i");
-    try { return new RegExp(source, flags); }
-    catch (e) { console.warn("Banned Terms: bad regex", e); return null; }
-  }
+  // Pure helpers live in lib/matching.js (BTWMatching) so they can be unit
+  // tested under test/. Only DOM-touching code stays here.
+  const { escapeRegex, hostMatches, buildRegex } = BTWMatching;
   function shouldSkipElement(el) {
     while (el && el.nodeType === 1) {
       if (SKIP_TAGS.has(el.tagName)) return true;
@@ -81,7 +64,7 @@
 
   // ---------- CSS Highlight setup ----------
   function setupHighlights() {
-    if (!useCSSHighlights) return;
+    if (!shouldUseCSSPath()) return;
     if (highlight) return;
     highlight = new Highlight();
     flashHighlight = new Highlight();
@@ -189,11 +172,11 @@
   }
 
   function processTextNodeCSS(textNode) {
+    // CSS Custom Highlight path: NO DOM mutation. Only used when markers are
+    // disabled. See AGENTS.md section 5.
     const matches = findMatchesInText(textNode.nodeValue);
     if (matches.length === 0) return false;
     setupHighlights();
-
-    // Add ranges + counts FIRST (offsets are still valid on the original node).
     for (const mt of matches) {
       const key = termKeyFor(mt.text);
       const r = document.createRange();
@@ -203,19 +186,6 @@
       if (!rangesByTerm.has(key)) rangesByTerm.set(key, []);
       rangesByTerm.get(key).push(r);
       state.matchCounts.set(key, (state.matchCounts.get(key) || 0) + 1);
-    }
-
-    // Then, if markers enabled, split the text node at each match.end (reverse
-    // order so earlier offsets stay valid) and insert a marker before the tail.
-    if (state.config && state.config.highlightMatches !== false) {
-      for (let i = matches.length - 1; i >= 0; i--) {
-        const end = matches[i].end;
-        const node = textNode;
-        // splitText preserves Range boundaries per DOM spec.
-        const tail = node.splitText(end);
-        const marker = makeMarker();
-        tail.parentNode.insertBefore(marker, tail);
-      }
     }
     return true;
   }
@@ -267,8 +237,9 @@
     } else { return false; }
 
     let changed = false;
+    const useCSS = shouldUseCSSPath();
     for (const tn of textNodes) {
-      const did = useCSSHighlights ? processTextNodeCSS(tn) : processTextNodeFallback(tn);
+      const did = useCSS ? processTextNodeCSS(tn) : processTextNodeFallback(tn);
       if (did) changed = true;
     }
     return changed;
@@ -287,7 +258,7 @@
   }
 
   function scrollToMatch(termKey, index) {
-    if (useCSSHighlights) {
+    if (shouldUseCSSPath()) {
       const arr = rangesByTerm.get(termKey);
       if (!arr || arr.length === 0) return { ok: false };
       // Filter still-attached ranges.
@@ -395,7 +366,9 @@
   }
 
   // ---------- Messaging ----------
-  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    // Only accept messages from our own extension (popup / background).
+    if (!sender || sender.id !== chrome.runtime.id) return;
     if (!msg || !msg.type) return;
     if (msg.type === "getMatches") {
       const matches = Array.from(state.matchCounts.entries()).map(([term, count]) => ({ term, count }));

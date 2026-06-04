@@ -1,12 +1,6 @@
-const DEFAULTS = {
-  enabled: true,
-  caseSensitive: false,
-  wholeWordOnly: true,
-  highlightMatches: true,
-  globalTerms: [],
-  siteRules: [],
-  disabledHosts: []
-};
+// options.js
+// Uses shared lib/matching.js (BTWMatching) for DEFAULTS + import sanitisation.
+const DEFAULTS = BTWMatching.DEFAULT_CONFIG;
 
 function linesToArr(s) {
   return (s || "").split(/\r?\n/).map(x => x.trim()).filter(Boolean);
@@ -16,21 +10,48 @@ function arrToLines(a) {
 }
 
 function renderRule(rule, idx) {
+  // Built entirely with createElement / textContent / setAttribute. No
+  // innerHTML, no template strings interpolating data.
   const div = document.createElement("div");
   div.className = "rule";
   div.dataset.idx = String(idx);
-  div.innerHTML = `
-    <label class="block">Hostname pattern</label>
-    <input type="text" class="rule-pattern" placeholder="example.com" />
-    <label class="block">Banned terms for this site (one per line)</label>
-    <textarea class="rule-terms" placeholder="term1&#10;term2"></textarea>
-    <div class="row" style="margin-top:8px">
-      <button type="button" class="danger remove-rule">Remove</button>
-    </div>
-  `;
-  div.querySelector(".rule-pattern").value = rule.pattern || "";
-  div.querySelector(".rule-terms").value = arrToLines(rule.terms);
-  div.querySelector(".remove-rule").addEventListener("click", () => div.remove());
+
+  const lblPattern = document.createElement("label");
+  lblPattern.className = "block";
+  lblPattern.textContent = "Hostname pattern";
+
+  const inputPattern = document.createElement("input");
+  inputPattern.type = "text";
+  inputPattern.className = "rule-pattern";
+  inputPattern.placeholder = "example.com";
+  inputPattern.maxLength = 253;
+  inputPattern.value = (rule && typeof rule.pattern === "string") ? rule.pattern : "";
+
+  const lblTerms = document.createElement("label");
+  lblTerms.className = "block";
+  lblTerms.textContent = "Banned terms for this site (one per line)";
+
+  const taTerms = document.createElement("textarea");
+  taTerms.className = "rule-terms";
+  taTerms.placeholder = "term1\nterm2";
+  taTerms.value = arrToLines(rule && rule.terms);
+
+  const row = document.createElement("div");
+  row.className = "row";
+  row.style.marginTop = "8px";
+
+  const removeBtn = document.createElement("button");
+  removeBtn.type = "button";
+  removeBtn.className = "danger remove-rule";
+  removeBtn.textContent = "Remove";
+  removeBtn.addEventListener("click", () => div.remove());
+  row.appendChild(removeBtn);
+
+  div.appendChild(lblPattern);
+  div.appendChild(inputPattern);
+  div.appendChild(lblTerms);
+  div.appendChild(taTerms);
+  div.appendChild(row);
   return div;
 }
 
@@ -54,7 +75,7 @@ async function load() {
   document.getElementById("globalTerms").value = arrToLines(c.globalTerms);
   document.getElementById("disabledHosts").value = arrToLines(c.disabledHosts);
   const wrap = document.getElementById("siteRules");
-  wrap.innerHTML = "";
+  wrap.textContent = "";
   (c.siteRules || []).forEach((r, i) => wrap.appendChild(renderRule(r, i)));
 
   const area = await BTWConfig.getActiveAreaName();
@@ -63,7 +84,9 @@ async function load() {
 }
 
 async function save() {
-  const config = {
+  // Run the same sanitiser used by import, so the saved config always
+  // conforms to the validated shape (limits enforced, unknown keys dropped).
+  const raw = {
     enabled: document.getElementById("enabled").checked,
     caseSensitive: document.getElementById("caseSensitive").checked,
     wholeWordOnly: document.getElementById("wholeWordOnly").checked,
@@ -72,6 +95,7 @@ async function save() {
     disabledHosts: linesToArr(document.getElementById("disabledHosts").value),
     siteRules: collectRules()
   };
+  const config = BTWMatching.sanitizeImportedConfig(raw);
   await BTWConfig.setConfig(config);
   flashStatus("Saved.");
 }
@@ -86,7 +110,6 @@ async function handleStorageChange(target) {
   const res = await BTWConfig.setActiveAreaName(target);
   if (!res.ok) {
     flashStatus("Storage switch failed: " + res.error);
-    // Revert the radio buttons to the actual area.
     const area = await BTWConfig.getActiveAreaName();
     document.getElementById("storageSync").checked = area === "sync";
     document.getElementById("storageLocal").checked = area === "local";
@@ -129,14 +152,20 @@ document.addEventListener("DOMContentLoaded", () => {
     const file = e.target.files[0];
     if (!file) return;
     try {
+      // Hard cap on file size: 1 MiB is plenty for thousands of terms and
+      // protects against accidental / malicious huge JSON files.
+      if (file.size > 1024 * 1024) throw new Error("file too large (>1 MiB)");
       const text = await file.text();
       const parsed = JSON.parse(text);
-      const merged = Object.assign({}, DEFAULTS, parsed);
-      await BTWConfig.setConfig(merged);
+      const clean = BTWMatching.sanitizeImportedConfig(parsed);
+      await BTWConfig.setConfig(clean);
       await load();
       flashStatus("Imported.");
     } catch (err) {
-      flashStatus("Import failed: " + err.message);
+      flashStatus("Import failed: " + (err && err.message ? err.message : String(err)));
+    } finally {
+      // Reset the file input so re-selecting the same file fires "change".
+      e.target.value = "";
     }
   });
 });

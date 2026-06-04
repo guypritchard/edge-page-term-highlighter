@@ -10,15 +10,29 @@ on:
         description: "Version to release (e.g. 1.0.1). Must match manifest.json."
         required: true
 
+# Principle of least privilege: only what each job needs.
 permissions:
-  contents: write
+  contents: write   # for creating the GitHub Release
+  # Everything else (id-token, pull-requests, actions, ...) stays default-none.
 
 jobs:
   build-and-release:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    # Hard timeout so a stuck job can't burn quota forever.
+    timeout-minutes: 10
     steps:
+      - name: Harden runner
+        # Restricts the runner's outbound network surface during the job.
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
       - name: Checkout
-        uses: actions/checkout@v4
+        # Pinned to commit SHA (v4.2.2) to defend against supply-chain
+        # compromise of moving tags. Update via Dependabot.
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - name: Determine version
         id: ver
@@ -30,6 +44,11 @@ jobs:
           else
             TAG="${GITHUB_REF_NAME}"
             VERSION="${TAG#v}"
+          fi
+          # Defensive validation: semver only, no shell metacharacters.
+          if ! echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Invalid version format: $VERSION"
+            exit 1
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
@@ -46,18 +65,23 @@ jobs:
             exit 1
           fi
 
+      - name: Run unit tests
+        shell: bash
+        run: node --test test/
+
       - name: Package extension
         id: pkg
         shell: bash
         run: |
           NAME="edge-banned-terms-warning-${{ steps.ver.outputs.version }}"
           mkdir -p dist staging
-          # Stage only the files that belong in the extension package.
           rsync -a \
             --exclude '.git' \
             --exclude '.github' \
             --exclude 'dist' \
             --exclude 'staging' \
+            --exclude 'test' \
+            --exclude 'AGENTS.md' \
             --exclude 'README.md' \
             --exclude 'LICENSE' \
             --exclude '.gitignore' \
@@ -75,7 +99,8 @@ jobs:
           cat "${{ steps.pkg.outputs.name }}.zip.sha256"
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        # Pinned to commit SHA (v2.3.4). Update via Dependabot.
+        uses: softprops/action-gh-release@62c96d0c4e8a889135c1f3a25910db8dbe0e85f7 # v2.3.4
         with:
           tag_name: ${{ steps.ver.outputs.tag }}
           name: ${{ steps.ver.outputs.tag }}
@@ -84,16 +109,15 @@ jobs:
             ## Install (Developer Mode)
 
             1. Download `${{ steps.pkg.outputs.name }}.zip` from the Assets below.
-            2. Extract the zip to a folder you will keep (Edge loads the extension from disk).
-            3. Open Edge and go to `edge://extensions/`.
-            4. Toggle **Developer mode** on (bottom-left).
-            5. Click **Load unpacked** and select the extracted folder.
-            6. Pin the extension from the toolbar puzzle-piece menu.
-            7. Click the icon -> **Settings** to add banned terms and per-site rules.
+            2. Verify the SHA256 against `${{ steps.pkg.outputs.name }}.zip.sha256`.
+            3. Extract the zip to a folder you will keep (Edge loads the extension from disk).
+            4. Open Edge and go to `edge://extensions/`.
+            5. Toggle **Developer mode** on (bottom-left).
+            6. Click **Load unpacked** and select the extracted folder.
+            7. Pin the extension from the toolbar puzzle-piece menu.
+            8. Click the icon -> **Settings** to add banned terms and per-site rules.
 
             See the [README](https://github.com/${{ github.repository }}#readme) for full configuration details.
-
-            **SHA256:** see `${{ steps.pkg.outputs.name }}.zip.sha256`.
           files: |
             dist/${{ steps.pkg.outputs.name }}.zip
             dist/${{ steps.pkg.outputs.name }}.zip.sha256

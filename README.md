@@ -67,10 +67,9 @@ Open the **Settings** page (right-click extension icon -> *Extension options*, o
 A pattern matches if the page's hostname:
 
 - equals the pattern (`example.com` matches `example.com`), or
-- ends with `.` + the pattern (`example.com` matches `www.example.com`, `news.example.com`), or
-- contains the pattern as a substring (`example` matches `myexample.org`).
+- ends with `.` + the pattern (`example.com` matches `www.example.com`, `news.example.com`).
 
-Use the most specific pattern you can (`reddit.com` rather than just `reddit`).
+Substring matching was removed in v1.5.0 because it was a security footgun (a pattern of `google` would have matched `evil-google.com`). Use the exact registrable domain.
 
 ### Example configuration
 
@@ -112,8 +111,12 @@ This extension stores your banned-terms list in your browser's extension storage
 - **Other extensions reading your config.** Each extension's storage is partitioned by extension ID.
 - **Web pages reading the extension API.** Pages cannot access `chrome.storage`.
 - **Web pages reading the warning banner.** The banner is rendered inside a **closed shadow root** (`mode: "closed"`), so `document.querySelector` / `getRootNode()` returns nothing.
-- **Web pages enumerating the highlighted text on the page.** With the CSS Custom Highlight path (default on modern Edge/Chrome), there is **no DOM mutation** for the highlight - matches are painted via `::highlight()` ranges. The page cannot find them with `querySelectorAll`, cannot read attributes, and cannot pull the configured term list out of the DOM.
+- **Web pages enumerating the highlighted text on the page.** With the CSS Custom Highlight path (default on modern Edge/Chrome when markers are off), there is **no DOM mutation** for the highlight - matches are painted via `::highlight()` ranges. The page cannot find them with `querySelectorAll`, cannot read attributes, and cannot pull the configured term list out of the DOM.
 - **Web pages exfiltrating the configured term list from injected markers.** Marker spans (⚠️) carry no `title=` and no `data-*` attributes containing terms.
+- **Cross-site scripting from imported config files.** Imported JSON is validated against a strict allowlist (`sanitizeImportedConfig` in `lib/matching.js`); unknown keys are dropped, non-strings are rejected, schemes/slashes in hostnames are rejected, and hard caps prevent absurd term counts. File imports above 1 MiB are refused outright.
+- **Inline script injection in extension pages.** A strict Content Security Policy is declared in the manifest (`script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'`).
+- **Spoofed messages to the service worker.** The background script checks `sender.id === chrome.runtime.id` and `sender.tab` before acting on any incoming message.
+- **Supply-chain attacks on CI.** GitHub Actions are pinned by commit SHA (not moving tags), runners are hardened with `step-security/harden-runner`, the release job has `contents: write` and nothing else, and Dependabot tracks action updates.
 
 ### Residual risks
 
@@ -150,16 +153,31 @@ Open an issue if you want either of those prioritised.
 
 ```
 .
-├── manifest.json          # MV3 manifest
+├── manifest.json          # MV3 manifest (CSP + minimum_chrome_version)
 ├── background.js          # Service worker (badge + messaging)
 ├── content.js             # Page scanner + banner UI
 ├── popup.html / popup.js  # Toolbar popup
 ├── options.html / options.js  # Settings page
+├── lib/
+│   ├── config.js          # Storage area helper (BTWConfig)
+│   └── matching.js        # Pure helpers (regex, hostMatches, sanitiser)
+├── test/                  # node:test unit tests
 ├── icons/                 # 16/48/128 px icons
-└── .github/workflows/
-    ├── validate.yml       # PR / push validation
-    └── release.yml        # Builds & publishes a Release ZIP on tag
+└── .github/
+    ├── dependabot.yml
+    └── workflows/
+        ├── validate.yml   # PR / push: manifest + lint + tests + dry-run zip
+        ├── release.yml    # Tag-driven release ZIP + SHA-256
+        └── codeql.yml     # JS static analysis
 ```
+
+## Running the tests
+
+```bash
+node --test test/
+```
+
+No dependencies. Uses the Node.js built-in test runner.
 
 ---
 
