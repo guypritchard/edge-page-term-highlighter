@@ -30,9 +30,7 @@ function renderRule(rule, idx) {
   `;
   div.querySelector(".rule-pattern").value = rule.pattern || "";
   div.querySelector(".rule-terms").value = arrToLines(rule.terms);
-  div.querySelector(".remove-rule").addEventListener("click", () => {
-    div.remove();
-  });
+  div.querySelector(".remove-rule").addEventListener("click", () => div.remove());
   return div;
 }
 
@@ -47,7 +45,7 @@ function collectRules() {
 }
 
 async function load() {
-  const { config } = await chrome.storage.sync.get("config");
+  const config = await BTWConfig.getConfig();
   const c = Object.assign({}, DEFAULTS, config || {});
   document.getElementById("enabled").checked = !!c.enabled;
   document.getElementById("caseSensitive").checked = !!c.caseSensitive;
@@ -58,6 +56,10 @@ async function load() {
   const wrap = document.getElementById("siteRules");
   wrap.innerHTML = "";
   (c.siteRules || []).forEach((r, i) => wrap.appendChild(renderRule(r, i)));
+
+  const area = await BTWConfig.getActiveAreaName();
+  document.getElementById("storageSync").checked = area === "sync";
+  document.getElementById("storageLocal").checked = area === "local";
 }
 
 async function save() {
@@ -70,14 +72,28 @@ async function save() {
     disabledHosts: linesToArr(document.getElementById("disabledHosts").value),
     siteRules: collectRules()
   };
-  await chrome.storage.sync.set({ config });
+  await BTWConfig.setConfig(config);
   flashStatus("Saved.");
 }
 
 function flashStatus(msg) {
   const el = document.getElementById("status");
   el.textContent = msg;
-  setTimeout(() => { el.textContent = ""; }, 1800);
+  setTimeout(() => { el.textContent = ""; }, 2400);
+}
+
+async function handleStorageChange(target) {
+  const res = await BTWConfig.setActiveAreaName(target);
+  if (!res.ok) {
+    flashStatus("Storage switch failed: " + res.error);
+    // Revert the radio buttons to the actual area.
+    const area = await BTWConfig.getActiveAreaName();
+    document.getElementById("storageSync").checked = area === "sync";
+    document.getElementById("storageLocal").checked = area === "local";
+    return;
+  }
+  flashStatus(res.unchanged ? "No change." : `Moved to chrome.storage.${target}.`);
+  await load();
 }
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -90,14 +106,19 @@ document.addEventListener("DOMContentLoaded", () => {
 
   document.getElementById("save").addEventListener("click", save);
 
+  document.getElementById("storageSync").addEventListener("change", (e) => {
+    if (e.target.checked) handleStorageChange("sync");
+  });
+  document.getElementById("storageLocal").addEventListener("change", (e) => {
+    if (e.target.checked) handleStorageChange("local");
+  });
+
   document.getElementById("export").addEventListener("click", async () => {
-    const { config } = await chrome.storage.sync.get("config");
+    const config = await BTWConfig.getConfig();
     const blob = new Blob([JSON.stringify(config || DEFAULTS, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url;
-    a.download = "banned-terms-config.json";
-    a.click();
+    a.href = url; a.download = "banned-terms-config.json"; a.click();
     URL.revokeObjectURL(url);
   });
 
@@ -111,7 +132,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const text = await file.text();
       const parsed = JSON.parse(text);
       const merged = Object.assign({}, DEFAULTS, parsed);
-      await chrome.storage.sync.set({ config: merged });
+      await BTWConfig.setConfig(merged);
       await load();
       flashStatus("Imported.");
     } catch (err) {

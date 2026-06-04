@@ -1,10 +1,5 @@
-async function getConfig() {
-  const { config } = await chrome.storage.sync.get("config");
-  return config || {};
-}
-async function setConfig(config) {
-  await chrome.storage.sync.set({ config });
-}
+async function getConfig() { return (await BTWConfig.getConfig()) || {}; }
+async function setConfig(config) { await BTWConfig.setConfig(config); }
 async function currentTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   return tab;

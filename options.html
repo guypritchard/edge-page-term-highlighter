@@ -33,6 +33,13 @@
       <label><input type="checkbox" id="highlightMatches" /> Highlight matches in page (⚠️ marker)</label>
     </div>
 
+    <h2>Storage</h2>
+    <div class="row">
+      <label><input type="radio" name="storageArea" value="sync" id="storageSync" /> Sync across my devices (<code>chrome.storage.sync</code>)</label>
+      <label><input type="radio" name="storageArea" value="local" id="storageLocal" /> Local only - never leaves this device (<code>chrome.storage.local</code>)</label>
+    </div>
+    <p class="muted">Local-only is more private (your terms never reach Microsoft's sync servers). Switching migrates your existing configuration to the new storage area.</p>
+
     <h2>Global banned terms</h2>
     <p class="muted">One term or phrase per line. Applies to every page.</p>
     <textarea id="globalTerms" placeholder="example&#10;another banned phrase"></textarea>
@@ -54,6 +61,7 @@
       <span id="status" class="status"></span>
     </div>
 
+    <script src="lib/config.js"></script>
     <script src="options.js"></script>
   </body>
 </html>

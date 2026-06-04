@@ -94,51 +94,53 @@ You can paste this directly into the **Import JSON** button on the Settings page
 
 ## How it works
 
-- A content script runs at `document_idle` on every page, walks text nodes under `<body>`, and wraps each match in a highlight span with a ⚠️ marker.
+- A content script runs at `document_idle` on every page, walks text nodes under `<body>`, and either:
+  - Uses the **[CSS Custom Highlight API](https://developer.mozilla.org/en-US/docs/Web/API/CSS_Custom_Highlight_API)** (`CSS.highlights`) to paint the highlight without mutating the DOM (Edge / Chrome 105+, the default path), or
+  - Falls back to wrapping each match in a `<span>` on older engines.
 - A `MutationObserver` re-scans newly added subtrees as the page loads/changes (SPAs, infinite scroll, lazy-loaded content). `pushState`/`replaceState`/`popstate` trigger a full re-scan.
 - The banner is rendered inside a **closed Shadow DOM** so page scripts cannot read it via `document.querySelector`.
-- Configuration is read from `chrome.storage.sync`; changes take effect immediately on the next render pass.
+- Configuration is loaded via the shared helper in `lib/config.js`, which reads from either `chrome.storage.sync` or `chrome.storage.local` depending on the user's choice.
 
 ---
 
 ## Security model
 
-This extension stores your banned-terms list in your browser's extension storage and injects highlight markers into web pages. Here is what is and isn't protected.
+This extension stores your banned-terms list in your browser's extension storage and (optionally) paints highlight markers on web pages. Here is what is and isn't protected.
 
 ### Protected against
 
 - **Other extensions reading your config.** Each extension's storage is partitioned by extension ID.
 - **Web pages reading the extension API.** Pages cannot access `chrome.storage`.
-- **Web pages reading the warning banner.** The banner is rendered inside a **closed shadow root** (`mode: "closed"`), so `document.querySelector` / `getRootNode()` on the host element returns nothing.
-- **Web pages recovering the configured term list from injected markers.** Highlight spans carry an opaque per-session id (e.g. `data-btw="t3"`) instead of the original term. No `title=` tooltip and no `data-original-text` attribute is set. The text inside the highlight is just the matched substring that already exists in the page.
+- **Web pages reading the warning banner.** The banner is rendered inside a **closed shadow root** (`mode: "closed"`), so `document.querySelector` / `getRootNode()` returns nothing.
+- **Web pages enumerating the highlighted text on the page.** With the CSS Custom Highlight path (default on modern Edge/Chrome), there is **no DOM mutation** for the highlight - matches are painted via `::highlight()` ranges. The page cannot find them with `querySelectorAll`, cannot read attributes, and cannot pull the configured term list out of the DOM.
+- **Web pages exfiltrating the configured term list from injected markers.** Marker spans (⚠️) carry no `title=` and no `data-*` attributes containing terms.
 
-### Residual risks (the page can still learn)
+### Residual risks
 
-- **Which words on the page were highlighted.** The highlight span has a visible class (`__btw_hl__`) and a background colour. A determined page script can scan for them. The matched text was already on the page, so the only new fact leaked is *that you flagged it*.
-- The configured *list* of terms is not exposed - only those that happen to match the current page.
-
-### Local-machine threats
-
-- **Anyone with access to your Edge profile** (other apps you run, malware, forensic tools, an admin with disk access) can read the LevelDB store under `%LOCALAPPDATA%\Microsoft\Edge\User Data\Default\Local Extension Settings\<extension id>\`. Browser extension storage is not encrypted at rest.
-- **DevTools** on your own machine can read everything by design.
+- **Visible-extension presence.** If markers are enabled, the page sees a `<span class="__btw_mk__">⚠️</span>` next to each match. The page can count these but learns nothing about which words triggered them, nor any other configured term. Disable markers in Settings if you want zero visible-extension fingerprint.
+- **Local-machine access.** Anyone who can read your Edge profile (other apps you run, malware, forensic tools, an admin with disk access) can read the LevelDB store under `%LOCALAPPDATA%\Microsoft\Edge\User Data\Default\Local Extension Settings\<extension id>\`. Browser extension storage is not encrypted at rest.
+- **DevTools** on your own machine reads everything by design.
 - **Exported JSON** is plaintext on disk - treat it like any other secret.
 
-### Cloud sync (`chrome.storage.sync`)
+### Cloud sync (`chrome.storage.sync`) vs local (`chrome.storage.local`)
 
-- Your config syncs across devices via your Microsoft account.
-- Microsoft encrypts in transit (TLS) and at rest, but Microsoft holds the key (not zero-knowledge).
-- If you do not want cloud sync, the simplest mitigation today is **Export your config to a file, then clear the extension's storage** and rely on manual Import on other devices.
+The Settings page lets you choose:
 
-### Hardening options not yet enabled
+| Storage | Cross-device sync | Visible to Microsoft (cloud) | Quota |
+|---|---|---|---|
+| `chrome.storage.sync` (default) | Yes (via your MS account) | Yes - TLS in transit, MS-encrypted at rest, but **MS holds the key** | ~100 KB total, 8 KB per item |
+| `chrome.storage.local` | No | No - never leaves the device | ~10 MB |
 
-If your threat model demands more, these are reasonable extensions to add:
+Switching areas in Settings migrates your existing configuration automatically. If you have a large config saved in `local` and switch back to `sync`, the move can fail with a quota error - the UI will report it and revert.
 
-1. **Local-only storage** (`chrome.storage.local`) - never leaves the device. Trades cross-device sync for privacy.
-2. **Passphrase-encrypted config** - AES-GCM with a PBKDF2-derived key, prompted on session start. Lose the passphrase, lose the config.
-3. **Hash-only matching** - store SHA-256 hashes of each term and match by hashing tokenised words from the page. Removes plaintext from storage entirely at the cost of phrase/regex flexibility.
-4. **CSS Custom Highlight API** - paint highlights via `CSS.highlights` instead of DOM mutation. Removes the visible class entirely (no DOM-side leakage at all).
+### Further hardening not yet shipped
 
-Open an issue if you want any of these prioritised.
+If your threat model demands more:
+
+1. **Passphrase-encrypted config** - AES-GCM with a PBKDF2-derived key, prompted on session start. Lose the passphrase, lose the config.
+2. **Hash-only matching** - store SHA-256 hashes of each term and match by hashing tokenised words from the page. Removes plaintext from storage entirely at the cost of phrase/regex flexibility.
+
+Open an issue if you want either of those prioritised.
 
 ---
 

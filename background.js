@@ -1,5 +1,5 @@
 // background.js - service worker
-// Manages badge state and forwards scan results from content scripts.
+importScripts("lib/config.js");
 
 const DEFAULT_CONFIG = {
   enabled: true,
@@ -7,16 +7,14 @@ const DEFAULT_CONFIG = {
   wholeWordOnly: true,
   highlightMatches: true,
   globalTerms: [],
-  // siteRules: array of { pattern: "example.com" (substring/host match), terms: ["..."] }
   siteRules: [],
-  // disabledHosts: array of hostnames to skip entirely
   disabledHosts: []
 };
 
 chrome.runtime.onInstalled.addListener(async () => {
-  const existing = await chrome.storage.sync.get("config");
-  if (!existing.config) {
-    await chrome.storage.sync.set({ config: DEFAULT_CONFIG });
+  const existing = await BTWConfig.getConfig();
+  if (!existing) {
+    await BTWConfig.setConfig(DEFAULT_CONFIG);
   }
 });
 
@@ -24,7 +22,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg && msg.type === "scanResult" && sender.tab && typeof sender.tab.id === "number") {
     const count = msg.matches ? msg.matches.length : 0;
     const tabId = sender.tab.id;
-
     if (count > 0) {
       chrome.action.setBadgeBackgroundColor({ tabId, color: "#c0392b" });
       chrome.action.setBadgeText({ tabId, text: String(count) });
@@ -41,7 +38,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 });
 
-// Clear badge on navigation start.
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.status === "loading") {
     chrome.action.setBadgeText({ tabId, text: "" });

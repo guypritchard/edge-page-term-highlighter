@@ -18,7 +18,7 @@ jobs:
 
       - name: Lint JS files (syntax check)
         run: |
-          for f in background.js content.js popup.js options.js; do
+          for f in background.js content.js popup.js options.js lib/config.js; do
             echo "Checking $f"
             node --check "$f"
           done
