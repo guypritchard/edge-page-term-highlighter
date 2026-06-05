@@ -53,6 +53,6 @@ jobs:
       - name: Dry-run package
         run: |
           mkdir -p staging
-          rsync -a --exclude '.git' --exclude '.github' --exclude 'staging' --exclude 'test' --exclude 'AGENTS.md' --exclude 'README.md' --exclude 'LICENSE' --exclude '.gitignore' ./ staging/
+          rsync -a --exclude '.git' --exclude '.github' --exclude 'staging' --exclude 'test' --exclude 'AGENTS.md' --exclude 'SECURITY.md' --exclude 'README.md' --exclude 'LICENSE' --exclude '.gitignore' ./ staging/
           (cd staging && zip -r ../extension-preview.zip .)
           ls -la extension-preview.zip

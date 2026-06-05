@@ -214,14 +214,18 @@ highlight spans, and marker spans.
 - Every behaviour change ships in its own version bump and Release.
   Trivial README-only edits do not require a bump.
 - Tag pushes trigger `.github/workflows/release.yml`, which:
-  1. Resolves version from the tag (or `workflow_dispatch` input).
-  2. Verifies it matches `manifest.json`.
-  3. `rsync`s a clean staging tree excluding `.git`, `.github`, `dist`,
-     `staging`, `README.md`, `LICENSE`, `.gitignore`.
-  4. Zips to `dist/edge-banned-terms-warning-<version>.zip`.
-  5. Generates a `.zip.sha256` checksum.
-  6. Creates a GitHub Release with both files, install instructions, and
-     auto-generated changelog notes.
+  1. **Pauses for manual approval in the `production` environment** -
+     a listed reviewer must click Approve in the GitHub UI before the
+     job runs. The environment is also restricted to `refs/tags/v*`.
+  2. Resolves version from the tag (or `workflow_dispatch` input).
+  3. Verifies it matches `manifest.json`.
+  4. Runs `node --test test/*.test.js`.
+  5. `rsync`s a clean staging tree excluding `.git`, `.github`, `dist`,
+     `staging`, `test`, `AGENTS.md`, `SECURITY.md`, `README.md`,
+     `LICENSE`, `.gitignore`.
+  6. Zips to `dist/edge-banned-terms-warning-<version>.zip`.
+  7. Generates a `.zip.sha256` checksum.
+  8. Creates a GitHub Release with both files and install instructions.
 - `.github/workflows/validate.yml` runs on every push/PR: validates the
   manifest, `node --check`s every JS file (including `lib/config.js`),
   and dry-runs the packaging.
