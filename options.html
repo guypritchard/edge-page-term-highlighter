@@ -4,64 +4,142 @@
     <meta charset="utf-8" />
     <title>Banned Terms Warning - Settings</title>
     <style>
-      body { font: 14px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 820px; margin: 24px auto; padding: 0 16px; color: #222; }
-      h1 { margin-top: 0; }
-      h2 { margin-top: 28px; border-bottom: 1px solid #ddd; padding-bottom: 4px; }
-      textarea { width: 100%; min-height: 120px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; box-sizing: border-box; padding: 8px; }
-      input[type=text] { width: 100%; padding: 6px; box-sizing: border-box; font-family: ui-monospace, Consolas, monospace; }
-      label.block { display: block; margin: 10px 0 4px; font-weight: 600; }
-      .row { display: flex; gap: 8px; align-items: center; margin: 6px 0; }
-      .rule { border: 1px solid #ddd; padding: 10px; border-radius: 6px; margin: 10px 0; background: #fafafa; }
-      .rule input[type=text] { width: 100%; }
-      .rule textarea { min-height: 70px; }
-      button { padding: 6px 12px; cursor: pointer; }
-      .primary { background: #2c7be5; color: #fff; border: none; border-radius: 4px; padding: 8px 16px; }
-      .danger { background: #c0392b; color: #fff; border: none; border-radius: 4px; }
-      .muted { color: #666; font-size: 12px; }
-      .status { margin-left: 10px; color: #2c7be5; }
-      .toolbar { display: flex; gap: 8px; align-items: center; margin-top: 16px; }
+      :root {
+        --accent: #2563eb;
+        --accent-dark: #1d4ed8;
+        --danger: #c0392b;
+        --border: #e5e7eb;
+        --bg: #f8fafc;
+        --card: #ffffff;
+        --muted: #6b7280;
+        --text: #111827;
+      }
+      * { box-sizing: border-box; }
+      body {
+        font: 14px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        max-width: 880px; margin: 0 auto; padding: 32px 20px 80px;
+        color: var(--text); background: var(--bg);
+      }
+      h1 { margin: 0 0 4px; font-size: 24px; font-weight: 700; }
+      .subtitle { color: var(--muted); margin-bottom: 28px; }
+      h2 { margin: 32px 0 12px; font-size: 16px; font-weight: 600;
+           text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+
+      .panel { background: var(--card); border: 1px solid var(--border);
+               border-radius: 10px; padding: 20px; box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
+      .panel + .panel { margin-top: 16px; }
+
+      .toggles { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+      .toggle { display: flex; gap: 10px; align-items: center; cursor: pointer; user-select: none; }
+      .toggle input { margin: 0; transform: scale(1.1); accent-color: var(--accent); }
+
+      .profile { border: 1px solid var(--border); background: var(--card);
+                 border-radius: 10px; padding: 18px; margin: 12px 0;
+                 box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
+      .profile-head { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; }
+      .profile-head input.name {
+        flex: 1; padding: 8px 10px; border: 1px solid var(--border);
+        border-radius: 6px; font: inherit; font-weight: 600;
+      }
+      .profile-head input.name:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+      .profile-head .summary { color: var(--muted); font-size: 12px; white-space: nowrap; }
+
+      .field { margin: 10px 0; }
+      .field label.lbl { display: block; font-size: 12px; font-weight: 600;
+                         color: var(--muted); margin-bottom: 4px; text-transform: uppercase;
+                         letter-spacing: 0.04em; }
+      .field input[type=text], .field select {
+        width: 100%; padding: 8px 10px; border: 1px solid var(--border);
+        border-radius: 6px; font: inherit; background: #fff;
+      }
+      .field input[type=text]:focus, .field select:focus,
+      .field textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+      .field textarea {
+        width: 100%; min-height: 130px; padding: 10px;
+        border: 1px solid var(--border); border-radius: 6px;
+        font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+        font-size: 13px; resize: vertical;
+      }
+
+      .scope-grid { display: grid; grid-template-columns: 200px 1fr; gap: 12px; }
+      .scope-fields { display: flex; flex-direction: column; gap: 8px; }
+      .scope-fields.hidden { display: none; }
+      .terms-meta { display: flex; justify-content: space-between; align-items: center;
+                    color: var(--muted); font-size: 12px; margin-top: 6px; }
+
+      .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+      button { padding: 7px 14px; cursor: pointer; border-radius: 6px;
+               border: 1px solid var(--border); background: #fff;
+               font: inherit; color: var(--text); transition: background 0.15s; }
+      button:hover { background: #f3f4f6; }
+      button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+      button.primary:hover { background: var(--accent-dark); }
+      button.danger { background: #fff; color: var(--danger); border-color: var(--danger); }
+      button.danger:hover { background: #fef2f2; }
+      button.ghost { background: transparent; border-color: transparent; color: var(--accent); }
+      button.ghost:hover { background: #eff6ff; }
+
+      .empty {
+        text-align: center; padding: 32px; color: var(--muted);
+        border: 2px dashed var(--border); border-radius: 10px;
+      }
+
+      .toolbar { display: flex; gap: 8px; align-items: center; margin-top: 24px;
+                 padding: 16px 20px; background: var(--card);
+                 border: 1px solid var(--border); border-radius: 10px;
+                 position: sticky; bottom: 16px;
+                 box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+      .toolbar .spacer { flex: 1; }
+      .status { color: var(--accent); font-weight: 500; }
+      .status.error { color: var(--danger); }
+
+      .storage-row { display: flex; flex-direction: column; gap: 8px; }
+      .storage-row label { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
+      .storage-row .desc { color: var(--muted); font-size: 12px; }
+
+      code { background: #f3f4f6; padding: 1px 5px; border-radius: 3px;
+             font-size: 12px; font-family: ui-monospace, Consolas, monospace; }
     </style>
   </head>
   <body>
-    <h1>Banned Terms Warning - Settings</h1>
-    <p class="muted">A warning banner appears at the top of any page that contains one of these terms. Per-site rules only apply on matching hostnames.</p>
+    <h1>Banned Terms Warning</h1>
+    <p class="subtitle">Per-site profiles. The extension is silent on every page that does not match a profile you have configured.</p>
 
-    <div class="row">
-      <label><input type="checkbox" id="enabled" /> Extension enabled</label>
-      <label><input type="checkbox" id="caseSensitive" /> Case sensitive</label>
-      <label><input type="checkbox" id="wholeWordOnly" /> Whole words only</label>
-      <label><input type="checkbox" id="highlightMatches" /> Highlight matches in page (⚠️ marker)</label>
+    <h2>General</h2>
+    <div class="panel">
+      <div class="toggles">
+        <label class="toggle"><input type="checkbox" id="enabled" /> Extension enabled</label>
+        <label class="toggle"><input type="checkbox" id="wholeWordOnly" /> Whole words only</label>
+        <label class="toggle"><input type="checkbox" id="highlightMatches" /> Show inline marker</label>
+      </div>
     </div>
 
     <h2>Storage</h2>
-    <div class="row">
-      <label><input type="radio" name="storageArea" value="sync" id="storageSync" /> Sync across my devices (<code>chrome.storage.sync</code>)</label>
-      <label><input type="radio" name="storageArea" value="local" id="storageLocal" /> Local only - never leaves this device (<code>chrome.storage.local</code>)</label>
+    <div class="panel">
+      <div class="storage-row">
+        <label>
+          <input type="radio" name="storageArea" value="local" id="storageLocal" />
+          <span><strong>Local only</strong> &mdash; never leaves this device <code>chrome.storage.local</code>
+            <div class="desc">Recommended. Maximum privacy.</div></span>
+        </label>
+        <label>
+          <input type="radio" name="storageArea" value="sync" id="storageSync" />
+          <span><strong>Sync across my devices</strong> <code>chrome.storage.sync</code>
+            <div class="desc">Syncs through your browser account. Quota ~100 KB.</div></span>
+        </label>
+      </div>
     </div>
-    <p class="muted">Local-only is more private (your terms never reach Microsoft's sync servers). Switching migrates your existing configuration to the new storage area.</p>
 
-    <h2>Global banned terms</h2>
-    <p class="muted">One term or phrase per line. Applies to every page. Case sensitivity follows the <strong>Case sensitive</strong> checkbox above.</p>
-    <textarea id="globalTerms" placeholder="example&#10;another banned phrase"></textarea>
-
-    <h2>Global banned terms - case sensitive (acronym mode)</h2>
-    <p class="muted">One term per line. Always matched case-sensitively, regardless of the global <strong>Case sensitive</strong> checkbox. Useful for acronyms like <code>NASA</code> or <code>API</code> that you don't want matching <code>nasa</code> or <code>api</code> in ordinary prose.</p>
-    <textarea id="globalCsTerms" placeholder="NASA&#10;API&#10;BAE"></textarea>
-
-    <h2>Disabled sites</h2>
-    <p class="muted">Hostnames where scanning is fully skipped. One per line (e.g. <code>mail.google.com</code>).</p>
-    <textarea id="disabledHosts" style="min-height:70px"></textarea>
-
-    <h2>Per-site rules</h2>
-    <p class="muted">Additional terms that only trigger on matching hostnames. Hostname can be exact or a parent domain (e.g. <code>reddit.com</code> matches <code>www.reddit.com</code>).</p>
-    <div id="siteRules"></div>
-    <button id="addRule">+ Add site rule</button>
+    <h2>Site profiles</h2>
+    <div id="profiles"></div>
+    <button id="addProfile" class="ghost">+ Add profile</button>
 
     <div class="toolbar">
-      <button id="save" class="primary">Save</button>
+      <button id="save" class="primary">Save changes</button>
       <button id="export">Export JSON</button>
       <button id="import">Import JSON</button>
       <input type="file" id="importFile" accept="application/json" style="display:none" />
+      <div class="spacer"></div>
       <span id="status" class="status"></span>
     </div>
 

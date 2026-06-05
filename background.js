@@ -4,26 +4,13 @@ importScripts("lib/config.js", "lib/matching.js");
 
 const DEFAULT_CONFIG = BTWMatching.DEFAULT_CONFIG;
 
-chrome.runtime.onInstalled.addListener(async (details) => {
-  // Pin the storage area pointer so the new local-default (introduced in
-  // v1.4.1) doesn't silently hide an existing sync config from users
-  // upgrading from <= v1.4.0.
+chrome.runtime.onInstalled.addListener(async () => {
+  // Pin storage pointer to local for privacy. v2.0.0 is a clean schema
+  // with no upgrade-from-v1 path (sole user).
   const ptr = await chrome.storage.local.get("storageArea");
   if (!ptr.storageArea) {
-    if (details && details.reason === "update") {
-      const inSync = await chrome.storage.sync.get("config");
-      const inLocal = await chrome.storage.local.get("config");
-      if (inSync.config && !inLocal.config) {
-        await chrome.storage.local.set({ storageArea: "sync" });
-      } else {
-        await chrome.storage.local.set({ storageArea: "local" });
-      }
-    } else {
-      // Fresh install: default to local for privacy.
-      await chrome.storage.local.set({ storageArea: "local" });
-    }
+    await chrome.storage.local.set({ storageArea: "local" });
   }
-
   const existing = await BTWConfig.getConfig();
   if (!existing) {
     await BTWConfig.setConfig(Object.assign({}, DEFAULT_CONFIG));
@@ -31,16 +18,12 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 });
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  // Hard origin check: only accept messages from our OWN content scripts
-  // (sender.id === our extension id, sender.tab present). Extension pages
-  // (popup/options) don't update badges, so they shouldn't be reaching here.
+  // Hard origin check: only accept messages from our OWN content scripts.
   if (!sender || sender.id !== chrome.runtime.id) return;
   if (!msg || msg.type !== "scanResult") return;
   if (!sender.tab || typeof sender.tab.id !== "number") return;
 
   const tabId = sender.tab.id;
-  // Defensive: matches must be an array of {term, count}. Anything else is
-  // treated as zero matches.
   const matches = Array.isArray(msg.matches) ? msg.matches : [];
   const count = matches.length;
   if (count > 0) {

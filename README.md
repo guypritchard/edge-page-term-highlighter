@@ -4,7 +4,9 @@
 [![Release](https://github.com/guypritchard/edge-banned-terms-warning/actions/workflows/release.yml/badge.svg)](https://github.com/guypritchard/edge-banned-terms-warning/actions/workflows/release.yml)
 [![Latest Release](https://badgen.net/github/release/guypritchard/edge-banned-terms-warning/stable)](https://github.com/guypritchard/edge-banned-terms-warning/releases/latest)
 
-A Microsoft Edge / Chromium browser extension (Manifest V3) that scans the visible text of every page you load and shows a red ⚠️ warning banner at the top when any of your configured **banned terms** appear. Supports **global terms**, **per-site rules**, and **per-site disabling**.
+A Microsoft Edge / Chromium browser extension (Manifest V3) that scans the visible text of every page you load and shows a red ⚠️ warning banner at the top when any of your configured **banned terms** appear.
+
+The extension is **opt-in by site**: it does nothing on pages where no profile of yours applies. You define one or more **profiles**, each targeting a scope (whole site, just a hostname, a section of a site, an exact URL, an advanced match pattern, or any URL) with a list of terms to flag on those pages.
 
 > 100% local by default. No data leaves your browser. Your configuration is stored on this device only; cross-device sync via your browser account is available as an opt-in.
 
@@ -34,10 +36,10 @@ That's it. Your configuration is preserved.
 
 - ⚠️ Dismissible red banner at the top of any page containing matched terms
 - 🔢 Toolbar badge showing the number of distinct matches on the active tab
-- 🌐 **Global** banned terms list
-- 🎯 **Per-site rules** - extra terms that only fire on specific hostnames (and subdomains)
-- 🚫 **Per-site disable** - skip scanning entirely on chosen hosts
-- 🔠 Case-sensitive and whole-word matching toggles, plus **acronym mode** (always-case-sensitive terms like `NASA`, `API`)
+- 🎯 **Per-site profiles** with six scope kinds: any URL, whole site (host + subdomains), just a hostname, a path prefix (section of a site), an exact URL, or a Chromium match pattern
+- ➕ **"Add this page to a profile"** button in the popup creates a profile scoped to the current site in one click
+- 🔠 Per-term **case-sensitivity** via the `cs:` prefix (e.g. `cs:NASA` matches `NASA` but not `nasa`)
+- ✂️ Whole-word matching toggle
 - 👁️ **Visibility-aware counts** - matches inside collapsed accordions, hidden tab panels, or DOM subtrees that get removed by an SPA are dropped from the count automatically
 - 💾 Import / Export configuration as JSON
 - 🔒 Zero telemetry, no remote calls, no analytics
@@ -71,39 +73,57 @@ shasum -a 256 -c edge-banned-terms-warning-X.Y.Z.zip.sha256
 
 Open the **Settings** page (right-click extension icon -> *Extension options*, or popup -> *Settings*).
 
+### General toggles
+
 | Setting | Description |
 |---|---|
 | **Extension enabled** | Master on/off switch. |
-| **Case sensitive** | When off, "Foo" matches "foo", "FOO", etc. Applies to the regular term lists. |
-| **Whole words only** | When on, "cat" won't match inside "category". |
-| **Global banned terms** | One term/phrase per line. Applies to every page. Case sensitivity follows the **Case sensitive** checkbox. |
-| **Global banned terms - case sensitive (acronym mode)** | One term per line. Always matched case-sensitively, regardless of the **Case sensitive** checkbox. Use this for acronyms like `NASA` / `API` / `BAE` that you don't want matching `nasa` / `api` / `bae` in ordinary prose. |
-| **Disabled sites** | Hostnames where scanning is skipped (e.g. `mail.google.com`). |
-| **Per-site rules** | Hostname pattern + extra terms (regular and case-sensitive) that only trigger on that host or its subdomains. |
-| **Export / Import JSON** | Back up or share configuration between machines. |
+| **Whole words only** | When on, `cat` won't match inside `category`. |
+| **Show inline marker** | Insert a small ⚠️ next to each match on the page. Disable for zero visible-extension fingerprint (highlights then use the CSS Custom Highlight API and leave no DOM trace). |
 
-### Hostname matching
+### Site profiles
 
-A pattern matches if the page's hostname:
+Each profile has:
 
-- equals the pattern (`example.com` matches `example.com`), or
-- ends with `.` + the pattern (`example.com` matches `www.example.com`, `news.example.com`).
+- **Name** - free-form label.
+- **Scope** - one of:
+  - **Any URL** - applies on every page where the extension runs.
+  - **Whole site** - hostname + all subdomains (e.g. `example.com` covers `www.example.com`, `news.example.com`).
+  - **Just this hostname** - exact hostname only (no subdomains).
+  - **Section of a site (path prefix)** - hostname + subdomains + a path that the page must start with (directory-aware: `/r/news` matches `/r/news` and `/r/news/foo` but not `/r/newsletter`).
+  - **One exact URL** - scheme + host + path must match exactly.
+  - **Advanced match pattern** - Chromium-style pattern, e.g. `https://*.example.com/news/*`.
+- **Banned terms** - one per line. Prefix a line with `cs:` to make that term case-sensitive (e.g. `cs:NASA` matches `NASA` but not `nasa`); everything else is case-insensitive.
 
-Substring matching was removed in v1.5.0 because it was a security footgun (a pattern of `google` would have matched `evil-google.com`). Use the exact registrable domain.
+The fastest way to start is to open the page you want to scan, click the toolbar icon, then click **+ Add this page to a profile** - the Settings page opens with a new profile pre-scoped to the current site, ready for you to paste in terms.
 
 ### Example configuration
 
 ```json
 {
+  "schemaVersion": 2,
   "enabled": true,
-  "caseSensitive": false,
   "wholeWordOnly": true,
-  "globalTerms": ["confidential", "internal use only"],
-  "globalCsTerms": ["NASA", "API"],
-  "disabledHosts": ["mail.google.com"],
-  "siteRules": [
-    { "pattern": "reddit.com",   "terms": ["spoiler"], "csTerms": [] },
-    { "pattern": "news.ycombinator.com", "terms": ["acquired", "shutdown"], "csTerms": ["IPO"] }
+  "highlightMatches": true,
+  "profiles": [
+    {
+      "id": "p_work",
+      "name": "Work HR site",
+      "scope": { "kind": "wholeSite", "host": "hr.example.com" },
+      "terms": ["confidential", "internal use only", "cs:API"]
+    },
+    {
+      "id": "p_reddit",
+      "name": "Reddit r/news",
+      "scope": { "kind": "pathPrefix", "host": "reddit.com", "path": "/r/news" },
+      "terms": ["spoiler"]
+    },
+    {
+      "id": "p_any",
+      "name": "Acronyms everywhere",
+      "scope": { "kind": "anyUrl" },
+      "terms": ["cs:NASA", "cs:BAE"]
+    }
   ]
 }
 ```
@@ -114,7 +134,7 @@ You can paste this directly into the **Import JSON** button on the Settings page
 
 ## How it works
 
-- A content script runs at `document_idle` on every page, walks text nodes under `<body>`, and either:
+- A content script runs at `document_idle` on every page, reads the user's profiles, and **bails silently** if no profile matches the current URL. On matching pages it walks text nodes under `<body>` and either:
   - Uses the **[CSS Custom Highlight API](https://developer.mozilla.org/en-US/docs/Web/API/CSS_Custom_Highlight_API)** (`CSS.highlights`) to paint the highlight without mutating the DOM (Edge / Chrome 105+, the default path), or
   - Falls back to wrapping each match in a `<span>` on older engines.
 - A `MutationObserver` re-scans newly added subtrees as the page loads/changes (SPAs, infinite scroll, lazy-loaded content). `pushState`/`replaceState`/`popstate` trigger a full re-scan.
@@ -158,7 +178,7 @@ Your configuration is kept on this device only. The Settings page also offers an
 
 Switching areas in Settings migrates your existing configuration automatically. If you move a large config from local to sync and exceed the quota, the UI reports the error and reverts.
 
-> New installs default to local storage. Upgrades from v1.4.0 or earlier keep using whichever area already held your config so nothing changes silently.
+> New installs default to local storage.
 
 ### Further hardening not yet shipped
 

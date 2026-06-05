@@ -20,12 +20,14 @@
       .match .count { color: #c0392b; font-variant-numeric: tabular-nums; }
       .match button { width: auto; padding: 2px 8px; font-size: 11px; }
       .none { color: #888; padding: 6px; }
+      .add-page { background: #2563eb; color: #fff; border: 1px solid #2563eb; border-radius: 4px; padding: 8px; font-weight: 600; }
+      .add-page:hover { background: #1d4ed8; }
       hr { border: none; border-top: 1px solid #eee; margin: 10px 0; }
     </style>
   </head>
   <body>
     <h1>Banned Terms Warning</h1>
-    <label><input type="checkbox" id="enabled" /> Enabled</label>
+    <label><input type="checkbox" id="enabled" /> Extension enabled</label>
     <small id="hostInfo"></small>
 
     <div class="matches">
@@ -33,11 +35,12 @@
       <div id="matchList"><div class="none">No matches.</div></div>
     </div>
 
+    <button id="addPage" class="add-page" style="margin:6px 0">+ Add this page to a profile</button>
+
     <div class="row">
       <button id="rescan">Rescan</button>
       <button id="options">Settings</button>
     </div>
-    <button id="toggleHost" style="margin-top:6px">Disable on this site</button>
     <script src="lib/config.js"></script>
     <script src="popup.js"></script>
   </body>

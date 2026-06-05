@@ -1,6 +1,15 @@
-// options.js
-// Uses shared lib/matching.js (BTWMatching) for DEFAULTS + import sanitisation.
+// options.js v2.0.0 - profile-based UI.
+//
+// One profile = { id, name, scope, terms: ["banned phrase", "cs:NASA"] }.
+// Scope is one of six kinds; UI shows a dropdown and conditional fields.
+// Save runs every profile through BTWMatching.sanitizeImportedConfig so
+// the stored shape always conforms (limits + allowlist enforced).
 const DEFAULTS = BTWMatching.DEFAULT_CONFIG;
+const M = BTWMatching;
+
+// In-memory working copy of profiles. Re-rendered on Add/Remove; field
+// values are read from the DOM at save time.
+let workingProfiles = [];
 
 function linesToArr(s) {
   return (s || "").split(/\r?\n/).map(x => x.trim()).filter(Boolean);
@@ -9,70 +18,208 @@ function arrToLines(a) {
   return (a || []).join("\n");
 }
 
-function renderRule(rule, idx) {
-  // Built entirely with createElement / textContent / setAttribute. No
-  // innerHTML, no template strings interpolating data.
-  const div = document.createElement("div");
-  div.className = "rule";
-  div.dataset.idx = String(idx);
-
-  const lblPattern = document.createElement("label");
-  lblPattern.className = "block";
-  lblPattern.textContent = "Hostname pattern";
-
-  const inputPattern = document.createElement("input");
-  inputPattern.type = "text";
-  inputPattern.className = "rule-pattern";
-  inputPattern.placeholder = "example.com";
-  inputPattern.maxLength = 253;
-  inputPattern.value = (rule && typeof rule.pattern === "string") ? rule.pattern : "";
-
-  const lblTerms = document.createElement("label");
-  lblTerms.className = "block";
-  lblTerms.textContent = "Banned terms for this site (one per line)";
-
-  const taTerms = document.createElement("textarea");
-  taTerms.className = "rule-terms";
-  taTerms.placeholder = "term1\nterm2";
-  taTerms.value = arrToLines(rule && rule.terms);
-
-  const lblCsTerms = document.createElement("label");
-  lblCsTerms.className = "block";
-  lblCsTerms.textContent = "Case-sensitive terms for this site (acronym mode)";
-
-  const taCsTerms = document.createElement("textarea");
-  taCsTerms.className = "rule-cs-terms";
-  taCsTerms.placeholder = "NASA\nAPI";
-  taCsTerms.value = arrToLines(rule && rule.csTerms);
-
-  const row = document.createElement("div");
-  row.className = "row";
-  row.style.marginTop = "8px";
-
-  const removeBtn = document.createElement("button");
-  removeBtn.type = "button";
-  removeBtn.className = "danger remove-rule";
-  removeBtn.textContent = "Remove";
-  removeBtn.addEventListener("click", () => div.remove());
-  row.appendChild(removeBtn);
-
-  div.appendChild(lblPattern);
-  div.appendChild(inputPattern);
-  div.appendChild(lblTerms);
-  div.appendChild(taTerms);
-  div.appendChild(lblCsTerms);
-  div.appendChild(taCsTerms);
-  div.appendChild(row);
-  return div;
+// ---------- scope UI ----------
+function scopeFieldsHTML() {
+  // Returns the set of conditional field blocks keyed by scope kind.
+  // The active one is shown; others hidden via .hidden.
+  const wrap = document.createElement("div");
+  wrap.className = "scope-fields";
+  return wrap;
 }
 
-function collectRules() {
+function makeField(labelText, input) {
+  const f = document.createElement("div");
+  f.className = "field";
+  const lbl = document.createElement("label");
+  lbl.className = "lbl";
+  lbl.textContent = labelText;
+  f.appendChild(lbl);
+  f.appendChild(input);
+  return f;
+}
+
+function renderScope(scope) {
+  // Returns { wrap, read() -> scope-shaped object, sync() -> refresh visibility }.
+  const wrap = document.createElement("div");
+  wrap.className = "scope-grid";
+
+  const kindWrap = document.createElement("div");
+  const select = document.createElement("select");
+  select.className = "scope-kind";
+  [
+    ["anyUrl", "Any URL"],
+    ["wholeSite", "Whole site (host + subdomains)"],
+    ["hostOnly", "Just this hostname (no subdomains)"],
+    ["pathPrefix", "Section of a site (path prefix)"],
+    ["exactUrl", "One exact URL"],
+    ["matchPattern", "Advanced: match pattern"]
+  ].forEach(([v, label]) => {
+    const o = document.createElement("option");
+    o.value = v; o.textContent = label; select.appendChild(o);
+  });
+  select.value = (scope && M.VALID_SCOPE_KINDS.indexOf(scope.kind) !== -1) ? scope.kind : "wholeSite";
+  kindWrap.appendChild(makeField("Where this profile applies", select));
+  wrap.appendChild(kindWrap);
+
+  const fields = document.createElement("div");
+  fields.className = "scope-fields";
+  wrap.appendChild(fields);
+
+  // Inputs we may need - created lazily but referenced from read().
+  const host = document.createElement("input");
+  host.type = "text"; host.className = "scope-host";
+  host.placeholder = "example.com";
+  host.maxLength = M.LIMITS.MAX_HOST_LENGTH;
+  host.value = (scope && typeof scope.host === "string") ? scope.host : "";
+
+  const path = document.createElement("input");
+  path.type = "text"; path.className = "scope-path";
+  path.placeholder = "/news";
+  path.maxLength = M.LIMITS.MAX_PATH_LENGTH;
+  path.value = (scope && typeof scope.path === "string") ? scope.path : "/";
+
+  const scheme = document.createElement("select");
+  scheme.className = "scope-scheme";
+  [["https", "https"], ["http", "http"]].forEach(([v, t]) => {
+    const o = document.createElement("option"); o.value = v; o.textContent = t; scheme.appendChild(o);
+  });
+  scheme.value = (scope && scope.scheme === "http") ? "http" : "https";
+
+  const pattern = document.createElement("input");
+  pattern.type = "text"; pattern.className = "scope-pattern";
+  pattern.placeholder = "https://*.example.com/*";
+  pattern.maxLength = M.LIMITS.MAX_PATTERN_LENGTH;
+  pattern.value = (scope && typeof scope.pattern === "string") ? scope.pattern : "";
+
+  function rebuildFields() {
+    fields.textContent = "";
+    const kind = select.value;
+    if (kind === "anyUrl") {
+      const note = document.createElement("div");
+      note.style.color = "#6b7280"; note.style.fontSize = "12px";
+      note.style.paddingTop = "8px";
+      note.textContent = "Profile applies on every page where the extension runs.";
+      fields.appendChild(note);
+    } else if (kind === "wholeSite" || kind === "hostOnly") {
+      fields.appendChild(makeField("Hostname", host));
+    } else if (kind === "pathPrefix") {
+      fields.appendChild(makeField("Hostname", host));
+      fields.appendChild(makeField("Path prefix (must start with /)", path));
+    } else if (kind === "exactUrl") {
+      fields.appendChild(makeField("Scheme", scheme));
+      fields.appendChild(makeField("Hostname", host));
+      fields.appendChild(makeField("Path (must start with /)", path));
+    } else if (kind === "matchPattern") {
+      fields.appendChild(makeField("Match pattern", pattern));
+      const help = document.createElement("div");
+      help.style.color = "#6b7280"; help.style.fontSize = "12px";
+      help.textContent = "Format: scheme://host/path. scheme = *, http, or https. host = *, *.domain, or exact. * wildcards allowed in path.";
+      fields.appendChild(help);
+    }
+  }
+  select.addEventListener("change", rebuildFields);
+  rebuildFields();
+
+  function read() {
+    const kind = select.value;
+    if (kind === "anyUrl") return { kind: "anyUrl" };
+    if (kind === "wholeSite") return { kind: "wholeSite", host: host.value.trim() };
+    if (kind === "hostOnly") return { kind: "hostOnly", host: host.value.trim() };
+    if (kind === "pathPrefix") return { kind: "pathPrefix", host: host.value.trim(), path: path.value.trim() };
+    if (kind === "exactUrl") return { kind: "exactUrl", scheme: scheme.value, host: host.value.trim(), path: path.value.trim() };
+    if (kind === "matchPattern") return { kind: "matchPattern", pattern: pattern.value.trim() };
+    return null;
+  }
+  return { wrap, read };
+}
+
+// ---------- profile card ----------
+function renderProfile(profile) {
+  const card = document.createElement("div");
+  card.className = "profile";
+  card.dataset.id = profile.id;
+
+  const head = document.createElement("div");
+  head.className = "profile-head";
+
+  const name = document.createElement("input");
+  name.type = "text"; name.className = "name";
+  name.placeholder = "Profile name (e.g. 'Work HR site')";
+  name.maxLength = M.LIMITS.MAX_NAME_LENGTH;
+  name.value = profile.name || "";
+  head.appendChild(name);
+
+  const removeBtn = document.createElement("button");
+  removeBtn.type = "button"; removeBtn.className = "danger";
+  removeBtn.textContent = "Remove";
+  removeBtn.addEventListener("click", () => {
+    workingProfiles = workingProfiles.filter(p => p.id !== profile.id);
+    renderProfilesList();
+  });
+  head.appendChild(removeBtn);
+  card.appendChild(head);
+
+  // Scope block.
+  const scopeUi = renderScope(profile.scope);
+  card.appendChild(scopeUi.wrap);
+
+  // Terms textarea.
+  const ta = document.createElement("textarea");
+  ta.className = "terms";
+  ta.spellcheck = false;
+  ta.placeholder = "confidential\ntop secret\ncs:NASA\ncs:API";
+  ta.value = arrToLines(profile.terms);
+
+  const termsField = makeField("Banned terms (one per line; prefix with cs: for case-sensitive)", ta);
+  card.appendChild(termsField);
+
+  const meta = document.createElement("div");
+  meta.className = "terms-meta";
+  const counts = document.createElement("span");
+  const hint = document.createElement("span");
+  hint.textContent = 'Tip: "cs:NASA" matches NASA but not nasa.';
+  meta.appendChild(counts);
+  meta.appendChild(hint);
+  termsField.appendChild(meta);
+
+  function updateCounts() {
+    const pools = M.splitTermPools(linesToArr(ta.value));
+    const total = pools.ci.length + pools.cs.length;
+    counts.textContent = total + " term" + (total === 1 ? "" : "s")
+      + " (" + pools.cs.length + " case-sensitive)";
+  }
+  ta.addEventListener("input", updateCounts);
+  updateCounts();
+
+  // Attach the readers so collect() can pull live values without a re-render.
+  card.__readScope = scopeUi.read;
+  card.__readName = () => name.value;
+  card.__readTerms = () => linesToArr(ta.value);
+  return card;
+}
+
+function renderProfilesList() {
+  const wrap = document.getElementById("profiles");
+  wrap.textContent = "";
+  if (workingProfiles.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = "No profiles yet. Add one to start scanning pages.";
+    wrap.appendChild(empty);
+    return;
+  }
+  for (const p of workingProfiles) wrap.appendChild(renderProfile(p));
+}
+
+// ---------- collect & save ----------
+function collectProfiles() {
   const out = [];
-  document.querySelectorAll("#siteRules .rule").forEach(div => {
-    const pattern = div.querySelector(".rule-pattern").value.trim();
-    const terms = linesToArr(div.querySelector(".rule-terms").value);
-    const csTerms = linesToArr(div.querySelector(".rule-cs-terms").value);
-    if (pattern || terms.length || csTerms.length) out.push({ pattern, terms, csTerms });
+  document.querySelectorAll("#profiles .profile").forEach((card) => {
+    const id = card.dataset.id;
+    const name = card.__readName();
+    const scope = card.__readScope();
+    const terms = card.__readTerms();
+    out.push({ id, name, scope, terms });
   });
   return out;
 }
@@ -80,16 +227,43 @@ function collectRules() {
 async function load() {
   const config = await BTWConfig.getConfig();
   const c = Object.assign({}, DEFAULTS, config || {});
-  document.getElementById("enabled").checked = !!c.enabled;
-  document.getElementById("caseSensitive").checked = !!c.caseSensitive;
-  document.getElementById("wholeWordOnly").checked = !!c.wholeWordOnly;
+  document.getElementById("enabled").checked = c.enabled !== false;
+  document.getElementById("wholeWordOnly").checked = c.wholeWordOnly !== false;
   document.getElementById("highlightMatches").checked = c.highlightMatches !== false;
-  document.getElementById("globalTerms").value = arrToLines(c.globalTerms);
-  document.getElementById("globalCsTerms").value = arrToLines(c.globalCsTerms);
-  document.getElementById("disabledHosts").value = arrToLines(c.disabledHosts);
-  const wrap = document.getElementById("siteRules");
-  wrap.textContent = "";
-  (c.siteRules || []).forEach((r, i) => wrap.appendChild(renderRule(r, i)));
+
+  workingProfiles = Array.isArray(c.profiles) ? c.profiles.map(p => ({
+    id: p.id || M.generateId(),
+    name: p.name || "",
+    scope: p.scope || { kind: "anyUrl" },
+    terms: Array.isArray(p.terms) ? p.terms.slice() : []
+  })) : [];
+
+  // Consume a "Add this page" prefill sentinel written by the popup, if any.
+  const prefillRes = await chrome.storage.local.get("__btw_prefill");
+  if (prefillRes && prefillRes.__btw_prefill) {
+    const prefill = prefillRes.__btw_prefill;
+    await chrome.storage.local.remove("__btw_prefill");
+    if (prefill && typeof prefill === "object" && typeof prefill.host === "string") {
+      const newProfile = {
+        id: M.generateId(),
+        name: prefill.host,
+        scope: { kind: "wholeSite", host: prefill.host },
+        terms: []
+      };
+      workingProfiles.push(newProfile);
+      // Defer scroll-into-view until after render.
+      setTimeout(() => {
+        const card = document.querySelector('.profile[data-id="' + newProfile.id + '"]');
+        if (card) {
+          card.scrollIntoView({ behavior: "smooth", block: "center" });
+          const ta = card.querySelector("textarea.terms");
+          if (ta) ta.focus();
+        }
+      }, 0);
+    }
+  }
+
+  renderProfilesList();
 
   const area = await BTWConfig.getActiveAreaName();
   document.getElementById("storageSync").checked = area === "sync";
@@ -97,48 +271,66 @@ async function load() {
 }
 
 async function save() {
-  // Run the same sanitiser used by import, so the saved config always
-  // conforms to the validated shape (limits enforced, unknown keys dropped).
   const raw = {
+    schemaVersion: M.SCHEMA_VERSION,
     enabled: document.getElementById("enabled").checked,
-    caseSensitive: document.getElementById("caseSensitive").checked,
     wholeWordOnly: document.getElementById("wholeWordOnly").checked,
     highlightMatches: document.getElementById("highlightMatches").checked,
-    globalTerms: linesToArr(document.getElementById("globalTerms").value),
-    globalCsTerms: linesToArr(document.getElementById("globalCsTerms").value),
-    disabledHosts: linesToArr(document.getElementById("disabledHosts").value),
-    siteRules: collectRules()
+    profiles: collectProfiles()
   };
-  const config = BTWMatching.sanitizeImportedConfig(raw);
+  const config = M.sanitizeImportedConfig(raw);
+  // Detect profile cards that the sanitiser rejected (e.g. invalid scope).
+  const rejected = raw.profiles.length - config.profiles.length;
   await BTWConfig.setConfig(config);
-  flashStatus("Saved.");
+  // Re-load so generated ids appear consistent and rejected cards drop away.
+  await load();
+  if (rejected > 0) {
+    flashStatus("Saved. " + rejected + " profile" + (rejected === 1 ? "" : "s")
+      + " dropped (invalid scope).", true);
+  } else {
+    flashStatus("Saved.");
+  }
 }
 
-function flashStatus(msg) {
+function flashStatus(msg, isError) {
   const el = document.getElementById("status");
   el.textContent = msg;
-  setTimeout(() => { el.textContent = ""; }, 2400);
+  el.className = "status" + (isError ? " error" : "");
+  setTimeout(() => { el.textContent = ""; el.className = "status"; }, 3000);
 }
 
 async function handleStorageChange(target) {
   const res = await BTWConfig.setActiveAreaName(target);
   if (!res.ok) {
-    flashStatus("Storage switch failed: " + res.error);
+    flashStatus("Storage switch failed: " + res.error, true);
     const area = await BTWConfig.getActiveAreaName();
     document.getElementById("storageSync").checked = area === "sync";
     document.getElementById("storageLocal").checked = area === "local";
     return;
   }
-  flashStatus(res.unchanged ? "No change." : `Moved to chrome.storage.${target}.`);
+  flashStatus(res.unchanged ? "No change." : "Moved to chrome.storage." + target + ".");
   await load();
 }
 
 document.addEventListener("DOMContentLoaded", () => {
   load();
 
-  document.getElementById("addRule").addEventListener("click", () => {
-    const wrap = document.getElementById("siteRules");
-    wrap.appendChild(renderRule({ pattern: "", terms: [], csTerms: [] }, wrap.children.length));
+  document.getElementById("addProfile").addEventListener("click", () => {
+    workingProfiles.push({
+      id: M.generateId(),
+      name: "",
+      scope: { kind: "wholeSite", host: "" },
+      terms: []
+    });
+    renderProfilesList();
+    // Focus the new card's name field.
+    const cards = document.querySelectorAll(".profile");
+    const last = cards[cards.length - 1];
+    if (last) {
+      last.scrollIntoView({ behavior: "smooth", block: "center" });
+      const n = last.querySelector("input.name");
+      if (n) n.focus();
+    }
   });
 
   document.getElementById("save").addEventListener("click", save);
@@ -166,19 +358,16 @@ document.addEventListener("DOMContentLoaded", () => {
     const file = e.target.files[0];
     if (!file) return;
     try {
-      // Hard cap on file size: 1 MiB is plenty for thousands of terms and
-      // protects against accidental / malicious huge JSON files.
       if (file.size > 1024 * 1024) throw new Error("file too large (>1 MiB)");
       const text = await file.text();
       const parsed = JSON.parse(text);
-      const clean = BTWMatching.sanitizeImportedConfig(parsed);
+      const clean = M.sanitizeImportedConfig(parsed);
       await BTWConfig.setConfig(clean);
       await load();
       flashStatus("Imported.");
     } catch (err) {
-      flashStatus("Import failed: " + (err && err.message ? err.message : String(err)));
+      flashStatus("Import failed: " + (err && err.message ? err.message : String(err)), true);
     } finally {
-      // Reset the file input so re-selecting the same file fires "change".
       e.target.value = "";
     }
   });

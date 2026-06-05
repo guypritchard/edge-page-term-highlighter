@@ -449,3 +449,107 @@ explicit conversation.
 4. Update README / AGENTS.md if the user-facing model or developer
    workflow changed.
 5. Commit with a clear, scoped message; tag and push when ready to ship.
+
+## 17. v2.0.0 redesign (current model)
+
+v2.0.0 supersedes the v1.x configuration model. The pre-1.6 acronym-mode
+shape described in §15.1 and the per-rule UI patterns described in §15
+were **removed**, not extended. There is no migration code (sole user).
+
+### 17.1 Schema
+
+```
+{
+  schemaVersion: 2,
+  enabled: boolean,
+  wholeWordOnly: boolean,
+  highlightMatches: boolean,
+  profiles: [
+    {
+      id: string,                 // generated via crypto.randomUUID()
+      name: string,               // free-form label
+      scope: Scope,               // see 17.3
+      terms: string[]             // each line either "term" or "cs:term"
+    }
+  ]
+}
+```
+
+The global `caseSensitive` flag, `globalTerms`, `globalCsTerms`,
+`siteRules`, `disabledHosts`, and per-rule `csTerms` are all gone. Case
+sensitivity is now expressed **per term** via the `cs:` line prefix
+(see `BTWMatching.CS_PREFIX`).
+
+### 17.2 Terms (cs: prefix)
+
+- `parseTermLine(line)` is the canonical parser. The `cs:` prefix is
+  case-insensitive (`CS:NASA` works) and is stripped before storage.
+- `splitTermPools(rawTerms)` returns `{ ci, cs }`: two arrays the
+  scanner compiles into separate regexes. CI pool dedupes
+  case-insensitively; CS pool dedupes by exact case.
+- `sanitizeTermList(arr)` is the canonical write-back form (cs:
+  prefix re-attached, lines re-trimmed, capped at
+  `LIMITS.MAX_PROFILE_TERMS = 5000`).
+
+### 17.3 Scope kinds
+
+Six canonical kinds in `BTWMatching.VALID_SCOPE_KINDS`. All shapes are
+JSON-safe; regex caches are built lazily on `scope.__pathRegex` inside
+`scopeMatchesUrl`.
+
+| kind          | shape                                                         | match rule |
+|---------------|---------------------------------------------------------------|------------|
+| `anyUrl`      | `{ kind }`                                                    | any parseable URL |
+| `wholeSite`   | `{ kind, host }`                                              | http/https + host equals or ends with `.host` |
+| `hostOnly`    | `{ kind, host }`                                              | http/https + host equals (no subdomains) |
+| `pathPrefix`  | `{ kind, host, path }`                                        | wholeSite-style host + path starts with prefix at a directory boundary (`/`, `?`, `#`) |
+| `exactUrl`    | `{ kind, scheme, host, path }`                                | scheme + host + path all equal |
+| `matchPattern`| `{ kind, pattern, scheme, host, includeSubdomains, path }`    | Chromium subset: `(*|https?)://(\*|*.host|host)/path` with `*` only in path |
+
+`<all_urls>` literal is NOT accepted - users pick `anyUrl` instead.
+
+### 17.4 Opt-in by site
+
+`manifest.json` keeps `<all_urls>` content_script registration for
+zero-prompt installation. `content.js` reads `profilesForUrl(profiles,
+location.href)` at the top of `run()` and returns immediately if the
+list is empty - no banner, no observer, no badge, no listeners beyond
+the runtime message handler. Net effect: the extension behaves as if
+it were opt-in by site, without re-prompting the user for optional
+host permissions on every new site.
+
+### 17.5 "Add this page" handoff
+
+Popup writes a one-shot prefill sentinel:
+
+```
+chrome.storage.local.set({ __btw_prefill: { host, scheme, path } })
+chrome.runtime.openOptionsPage()
+```
+
+Options reads + deletes the sentinel on `DOMContentLoaded`, appends a
+new profile scoped `{ kind: "wholeSite", host }`, scrolls to it, and
+focuses the terms textarea. Sentinel lives only in
+`chrome.storage.local` (never in `sync`).
+
+### 17.6 Popup ↔ content protocol (unchanged from v1.6.0)
+
+- `scanResult` / `getMatches` payload: `[{ key, term, count, cs }]`
+  where `key` is `"ci:<lower>"` or `"cs:<exact>"`.
+- `scrollToMatch` accepts `{ key, index }`.
+- Popup renders `Aa` badge when `cs === true`.
+
+### 17.7 Tests + limits
+
+- `test/matching.test.js` rewritten for v2 (66 passing, includes
+  `test/config.test.js`'s 7). Add new tests in the same style.
+- `LIMITS` (frozen): `MAX_TERM_LENGTH: 200`, `MAX_PROFILE_TERMS: 5000`,
+  `MAX_PROFILES: 500`, `MAX_NAME_LENGTH: 120`, `MAX_HOST_LENGTH: 253`,
+  `MAX_PATH_LENGTH: 2048`, `MAX_PATTERN_LENGTH: 2048`.
+- `SCHEMA_VERSION = 2`, `CS_PREFIX = "cs:"`.
+
+### 17.8 What was deliberately NOT done
+
+- No automatic migration from v1.x configs. Sole user; deleted in place.
+- No per-host disable. Users delete or rename the profile instead.
+- No regex-prefix support yet (see §13.2 follow-up).
