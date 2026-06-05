@@ -2,6 +2,16 @@
 // API where available (no DOM mutation for the colored highlight). Falls back
 // to span wrapping on older browsers. Markers (⚠️) are still injected as
 // minimal sibling spans when enabled.
+//
+// v1.6.0 additions:
+//  - Two pools (case-insensitive + case-sensitive "acronym mode") merged via
+//    BTWMatching.runScan with non-overlapping longest-first resolution.
+//  - reconcile() drops bookkeeping for matches that are no longer in the DOM
+//    OR no longer effectively visible (display:none / visibility:hidden /
+//    hidden / aria-hidden anywhere up the ancestor chain). Counts and the
+//    popup/badge update accordingly.
+//  - MutationObserver now also watches attribute changes on hidden / class /
+//    style / aria-hidden to catch tab swaps, accordion collapses, etc.
 (function () {
   if (window.__bannedTermsScanRan) return;
   window.__bannedTermsScanRan = true;
@@ -26,28 +36,25 @@
 
   let highlight = null;
   let flashHighlight = null;
-  // Range bookkeeping for CSS-Highlights path: term key (case-folded) -> Range[]
+  // Internal opaque key -> Range[] / span[]. Keys are "ci:<lower>" or "cs:<exact>".
   const rangesByTerm = new Map();
-  // For fallback path: term key -> span[]
   const spansByTerm = new Map();
 
   let state = {
     config: null,
-    regex: null,
-    terms: [],
+    ctx: null, // BTWMatching.buildScanContext result
     matchCounts: new Map(),
     observer: null,
     rescanTimer: null,
+    reconcileTimer: null,
     pendingNodes: new Set(),
     shadowHost: null,
     shadowRoot: null,
     bannerDismissed: false,
   };
 
-  // ---------- regex/utilities ----------
-  // Pure helpers live in lib/matching.js (BTWMatching) so they can be unit
-  // tested under test/. Only DOM-touching code stays here.
-  const { escapeRegex, hostMatches, buildRegex } = BTWMatching;
+  const { hostMatches, buildScanContext, runScan, reconcileBookkeeping } = BTWMatching;
+
   function shouldSkipElement(el) {
     while (el && el.nodeType === 1) {
       if (SKIP_TAGS.has(el.tagName)) return true;
@@ -58,8 +65,39 @@
     }
     return false;
   }
-  function termKeyFor(text) {
-    return (state.config && state.config.caseSensitive) ? text : text.toLowerCase();
+
+  // ---------- Visibility ----------
+  // Walks up to <body> looking for any ancestor that hides the subtree.
+  // Catches display:none, visibility:hidden, [hidden], [aria-hidden="true"],
+  // and detachment. Does NOT treat opacity:0 or scrolled-offscreen as
+  // hidden (those are stylistic / transient, not semantic hides).
+  function isEffectivelyVisible(node) {
+    let el = node && node.nodeType === 3 ? node.parentElement : node;
+    if (!el) return false;
+    if (!el.isConnected) return false;
+    const body = document.body;
+    while (el && el !== body && el.nodeType === 1) {
+      if (el.hidden) return false;
+      if (el.getAttribute && el.getAttribute("aria-hidden") === "true") return false;
+      // getComputedStyle is the slow part; we only call it once per ancestor
+      // and only inside the (debounced) reconcile pass.
+      const cs = el.ownerDocument && el.ownerDocument.defaultView
+        ? el.ownerDocument.defaultView.getComputedStyle(el)
+        : null;
+      if (cs && (cs.display === "none" || cs.visibility === "hidden" || cs.visibility === "collapse")) return false;
+      el = el.parentElement;
+    }
+    return true;
+  }
+
+  function isRangeLive(r) {
+    if (!r || !r.startContainer) return false;
+    if (!r.startContainer.isConnected) return false;
+    return isEffectivelyVisible(r.startContainer);
+  }
+  function isSpanLive(el) {
+    if (!el || !el.isConnected) return false;
+    return isEffectivelyVisible(el);
   }
 
   // ---------- CSS Highlight setup ----------
@@ -121,9 +159,30 @@
       if (b) b.remove();
     }
   }
+
+  // Build the popup-facing match list from state.matchCounts. Each entry:
+  //   { key, term, count, cs }
+  // where `term` is the user's originally-typed term (via displayByKey)
+  // and `cs` flags acronym-mode matches so the popup can show an Aa badge.
+  function buildMatchPayload() {
+    const display = state.ctx ? state.ctx.displayByKey : new Map();
+    const out = [];
+    for (const [key, count] of state.matchCounts) {
+      const cs = key.startsWith("cs:");
+      const fallback = key.slice(3);
+      out.push({
+        key: key,
+        term: display.get(key) || fallback,
+        count: count,
+        cs: cs
+      });
+    }
+    return out;
+  }
+
   function showBanner() {
     if (state.bannerDismissed) return;
-    const matches = Array.from(state.matchCounts.entries()).map(([term, count]) => ({ term, count }));
+    const matches = buildMatchPayload();
     if (matches.length === 0) { removeBanner(); return; }
     ensureShadow(); removeBanner();
     const total = matches.reduce((a, b) => a + b.count, 0);
@@ -142,9 +201,8 @@
 
   function sendMatches() {
     try {
-      const matches = Array.from(state.matchCounts.entries()).map(([term, count]) => ({ term, count }));
-      chrome.runtime.sendMessage({ type: "scanResult", matches });
-    } catch (e) { /* ignore */ }
+      chrome.runtime.sendMessage({ type: "scanResult", matches: buildMatchPayload() });
+    } catch (e) { /* ignore - no receiver, e.g. on chrome:// pages */ }
   }
 
   // ---------- Match processing ----------
@@ -159,46 +217,32 @@
     return marker;
   }
 
-  function findMatchesInText(text) {
-    if (!state.regex) return [];
-    state.regex.lastIndex = 0;
-    const out = [];
-    let m;
-    while ((m = state.regex.exec(text)) !== null) {
-      out.push({ start: m.index, end: m.index + m[0].length, text: m[0] });
-      if (m.index === state.regex.lastIndex) state.regex.lastIndex++;
-    }
-    return out;
-  }
-
   function processTextNodeCSS(textNode) {
     // CSS Custom Highlight path: NO DOM mutation. Only used when markers are
     // disabled. See AGENTS.md section 5.
-    const matches = findMatchesInText(textNode.nodeValue);
+    const matches = runScan(textNode.nodeValue, state.ctx);
     if (matches.length === 0) return false;
     setupHighlights();
     for (const mt of matches) {
-      const key = termKeyFor(mt.text);
       const r = document.createRange();
       r.setStart(textNode, mt.start);
       r.setEnd(textNode, mt.end);
       highlight.add(r);
-      if (!rangesByTerm.has(key)) rangesByTerm.set(key, []);
-      rangesByTerm.get(key).push(r);
-      state.matchCounts.set(key, (state.matchCounts.get(key) || 0) + 1);
+      if (!rangesByTerm.has(mt.key)) rangesByTerm.set(mt.key, []);
+      rangesByTerm.get(mt.key).push(r);
+      state.matchCounts.set(mt.key, (state.matchCounts.get(mt.key) || 0) + 1);
     }
     return true;
   }
 
   function processTextNodeFallback(textNode) {
-    const matches = findMatchesInText(textNode.nodeValue);
+    const matches = runScan(textNode.nodeValue, state.ctx);
     if (matches.length === 0) return false;
     const text = textNode.nodeValue;
     const frag = document.createDocumentFragment();
     let last = 0;
     for (const mt of matches) {
       if (mt.start > last) frag.appendChild(document.createTextNode(text.slice(last, mt.start)));
-      const key = termKeyFor(mt.text);
       const span = document.createElement("span");
       span.className = FALLBACK_HIGHLIGHT_CLASS;
       span.textContent = mt.text;
@@ -208,9 +252,9 @@
         boxShadow: "0 0 0 1px #c0392b inset"
       });
       frag.appendChild(span);
-      if (!spansByTerm.has(key)) spansByTerm.set(key, []);
-      spansByTerm.get(key).push(span);
-      state.matchCounts.set(key, (state.matchCounts.get(key) || 0) + 1);
+      if (!spansByTerm.has(mt.key)) spansByTerm.set(mt.key, []);
+      spansByTerm.get(mt.key).push(span);
+      state.matchCounts.set(mt.key, (state.matchCounts.get(mt.key) || 0) + 1);
       if (state.config && state.config.highlightMatches !== false) frag.appendChild(makeMarker());
       last = mt.end;
     }
@@ -220,7 +264,7 @@
   }
 
   function highlightUnder(root) {
-    if (!state.regex || !root) return false;
+    if (!state.ctx || !state.ctx.hasAny || !root) return false;
     if (root.nodeType === 1 && shouldSkipElement(root)) return false;
     const textNodes = [];
     if (root.nodeType === 3) {
@@ -261,8 +305,7 @@
     if (shouldUseCSSPath()) {
       const arr = rangesByTerm.get(termKey);
       if (!arr || arr.length === 0) return { ok: false };
-      // Filter still-attached ranges.
-      const valid = arr.filter((r) => r.startContainer && r.startContainer.isConnected);
+      const valid = arr.filter(isRangeLive);
       if (valid.length === 0) return { ok: false };
       const idx = ((index % valid.length) + valid.length) % valid.length;
       const r = valid[idx];
@@ -273,13 +316,41 @@
     } else {
       const arr = spansByTerm.get(termKey);
       if (!arr || arr.length === 0) return { ok: false };
-      const valid = arr.filter((el) => el.isConnected);
+      const valid = arr.filter(isSpanLive);
       if (valid.length === 0) return { ok: false };
       const idx = ((index % valid.length) + valid.length) % valid.length;
       valid[idx].scrollIntoView({ behavior: "smooth", block: "center" });
       flashSpan(valid[idx]);
       return { ok: true, index: idx, count: valid.length };
     }
+  }
+
+  // ---------- Reconciliation ----------
+  // Called when nodes are removed or attributes that affect visibility change.
+  // Drops dead bookkeeping entries, recomputes matchCounts, and if anything
+  // changed: also drops the corresponding entries from the CSS Highlight
+  // registry, refreshes the banner, and broadcasts the new totals.
+  function reconcile() {
+    const useCSS = shouldUseCSSPath();
+    const book = useCSS ? rangesByTerm : spansByTerm;
+    const isLive = useCSS ? isRangeLive : isSpanLive;
+    // Capture the dead set BEFORE reconcileBookkeeping mutates the map,
+    // so we can also evict them from the live Highlight object.
+    const dead = [];
+    if (useCSS && highlight) {
+      for (const arr of book.values()) {
+        for (const r of arr) if (!isLive(r)) dead.push(r);
+      }
+    }
+    const res = reconcileBookkeeping(book, isLive);
+    if (!res.changed) return false;
+    if (useCSS && highlight) {
+      for (const r of dead) { try { highlight.delete(r); } catch (e) {} }
+    }
+    state.matchCounts = res.matchCounts;
+    showBanner();
+    sendMatches();
+    return true;
   }
 
   // ---------- Mutation observer ----------
@@ -294,12 +365,21 @@
       if (changed) { showBanner(); sendMatches(); }
     }, 250);
   }
+  function scheduleReconcile() {
+    if (state.reconcileTimer) return;
+    state.reconcileTimer = setTimeout(() => {
+      state.reconcileTimer = null;
+      reconcile();
+    }, 250);
+  }
   function startObserver() {
     if (state.observer) state.observer.disconnect();
     if (!document.body) return;
     state.observer = new MutationObserver((mutations) => {
+      let needsReconcile = false;
       for (const mut of mutations) {
         if (mut.type === "childList") {
+          if (mut.removedNodes && mut.removedNodes.length) needsReconcile = true;
           mut.addedNodes.forEach((n) => {
             if (n.nodeType === 1) {
               if (n.id === SHADOW_HOST_ID) return;
@@ -309,10 +389,22 @@
           });
         } else if (mut.type === "characterData") {
           if (mut.target && !shouldSkipElement(mut.target.parentNode)) scheduleRescan(mut.target);
+        } else if (mut.type === "attributes") {
+          // A tab/accordion toggle (hidden / aria-hidden / class / style)
+          // can hide previously-visible matches. Trigger the reconciliation
+          // pass; it's a no-op if nothing actually became invisible.
+          needsReconcile = true;
         }
       }
+      if (needsReconcile) scheduleReconcile();
     });
-    state.observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    state.observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: ["hidden", "aria-hidden", "style", "class"]
+    });
   }
   function stopObserver() {
     if (state.observer) { state.observer.disconnect(); state.observer = null; }
@@ -342,6 +434,7 @@
     state.pendingNodes.clear();
     state.bannerDismissed = false;
     if (state.rescanTimer) { clearTimeout(state.rescanTimer); state.rescanTimer = null; }
+    if (state.reconcileTimer) { clearTimeout(state.reconcileTimer); state.reconcileTimer = null; }
   }
 
   async function run() {
@@ -351,15 +444,21 @@
     const host = location.hostname;
     if ((config.disabledHosts || []).some((h) => hostMatches(host, h))) return;
     const terms = [...(config.globalTerms || [])];
+    const csTerms = [...(config.globalCsTerms || [])];
     for (const rule of config.siteRules || []) {
-      if (rule && hostMatches(host, rule.pattern)) for (const t of rule.terms || []) terms.push(t);
+      if (rule && hostMatches(host, rule.pattern)) {
+        for (const t of rule.terms || []) terms.push(t);
+        for (const t of rule.csTerms || []) csTerms.push(t);
+      }
     }
-    const regex = buildRegex(terms, {
+    const ctx = buildScanContext({
+      terms: terms,
+      csTerms: csTerms,
       caseSensitive: !!config.caseSensitive,
       wholeWordOnly: !!config.wholeWordOnly
     });
-    if (!regex) return;
-    state.config = config; state.terms = terms; state.regex = regex;
+    if (!ctx.hasAny) return;
+    state.config = config; state.ctx = ctx;
     if (document.body) highlightUnder(document.body);
     showBanner(); sendMatches();
     startObserver();
@@ -371,12 +470,13 @@
     if (!sender || sender.id !== chrome.runtime.id) return;
     if (!msg || !msg.type) return;
     if (msg.type === "getMatches") {
-      const matches = Array.from(state.matchCounts.entries()).map(([term, count]) => ({ term, count }));
-      sendResponse({ matches, total: matches.reduce((a, b) => a + b.count, 0) });
+      const matches = buildMatchPayload();
+      sendResponse({ matches: matches, total: matches.reduce((a, b) => a + b.count, 0) });
       return true;
     }
     if (msg.type === "scrollToMatch") {
-      sendResponse(scrollToMatch(msg.term, msg.index || 0));
+      // msg.key is the opaque internal key returned in scanResult/getMatches.
+      sendResponse(scrollToMatch(msg.key, msg.index || 0));
       return true;
     }
     if (msg.type === "rescanNow") {
@@ -410,7 +510,7 @@
   else window.addEventListener("DOMContentLoaded", start, { once: true });
 
   window.addEventListener("load", () => {
-    if (state.regex && document.body && state.matchCounts.size === 0) {
+    if (state.ctx && state.ctx.hasAny && document.body && state.matchCounts.size === 0) {
       if (highlightUnder(document.body)) { showBanner(); sendMatches(); }
     }
   });

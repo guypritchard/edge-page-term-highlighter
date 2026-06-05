@@ -36,6 +36,15 @@ function renderRule(rule, idx) {
   taTerms.placeholder = "term1\nterm2";
   taTerms.value = arrToLines(rule && rule.terms);
 
+  const lblCsTerms = document.createElement("label");
+  lblCsTerms.className = "block";
+  lblCsTerms.textContent = "Case-sensitive terms for this site (acronym mode)";
+
+  const taCsTerms = document.createElement("textarea");
+  taCsTerms.className = "rule-cs-terms";
+  taCsTerms.placeholder = "NASA\nAPI";
+  taCsTerms.value = arrToLines(rule && rule.csTerms);
+
   const row = document.createElement("div");
   row.className = "row";
   row.style.marginTop = "8px";
@@ -51,6 +60,8 @@ function renderRule(rule, idx) {
   div.appendChild(inputPattern);
   div.appendChild(lblTerms);
   div.appendChild(taTerms);
+  div.appendChild(lblCsTerms);
+  div.appendChild(taCsTerms);
   div.appendChild(row);
   return div;
 }
@@ -60,7 +71,8 @@ function collectRules() {
   document.querySelectorAll("#siteRules .rule").forEach(div => {
     const pattern = div.querySelector(".rule-pattern").value.trim();
     const terms = linesToArr(div.querySelector(".rule-terms").value);
-    if (pattern || terms.length) out.push({ pattern, terms });
+    const csTerms = linesToArr(div.querySelector(".rule-cs-terms").value);
+    if (pattern || terms.length || csTerms.length) out.push({ pattern, terms, csTerms });
   });
   return out;
 }
@@ -73,6 +85,7 @@ async function load() {
   document.getElementById("wholeWordOnly").checked = !!c.wholeWordOnly;
   document.getElementById("highlightMatches").checked = c.highlightMatches !== false;
   document.getElementById("globalTerms").value = arrToLines(c.globalTerms);
+  document.getElementById("globalCsTerms").value = arrToLines(c.globalCsTerms);
   document.getElementById("disabledHosts").value = arrToLines(c.disabledHosts);
   const wrap = document.getElementById("siteRules");
   wrap.textContent = "";
@@ -92,6 +105,7 @@ async function save() {
     wholeWordOnly: document.getElementById("wholeWordOnly").checked,
     highlightMatches: document.getElementById("highlightMatches").checked,
     globalTerms: linesToArr(document.getElementById("globalTerms").value),
+    globalCsTerms: linesToArr(document.getElementById("globalCsTerms").value),
     disabledHosts: linesToArr(document.getElementById("disabledHosts").value),
     siteRules: collectRules()
   };
@@ -124,7 +138,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   document.getElementById("addRule").addEventListener("click", () => {
     const wrap = document.getElementById("siteRules");
-    wrap.appendChild(renderRule({ pattern: "", terms: [] }, wrap.children.length));
+    wrap.appendChild(renderRule({ pattern: "", terms: [], csTerms: [] }, wrap.children.length));
   });
 
   document.getElementById("save").addEventListener("click", save);

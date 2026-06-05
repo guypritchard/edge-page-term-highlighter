@@ -353,7 +353,85 @@ them without an explicit conversation.
 - **Dependabot** configured for weekly Action updates.
 - **CodeQL** JavaScript SAST workflow added (push + PR + weekly cron).
 
-## 15. What an agent should do before committing
+## 15. Features shipped in v1.6.0
+
+Two cross-cutting changes landed together. Do not regress without an
+explicit conversation.
+
+### 15.1 Acronym mode (per-list case sensitivity)
+
+- **New config fields**: top-level `globalCsTerms` (string[]) and
+  per-rule `csTerms` (string[]). Terms in these lists are **always**
+  matched case-sensitively regardless of the global `caseSensitive`
+  flag. Useful for `NASA` / `API` / `BAE` which should not match
+  `nasa` / `api` / `bae` in ordinary prose.
+- **Backward compatibility**: `sanitizeImportedConfig` and
+  `sanitizeSiteRules` default missing `globalCsTerms` / `csTerms` to
+  `[]` so pre-1.6 configs and JSON imports keep working unchanged. No
+  storage migration was needed.
+- **Pure-helper contract** in `lib/matching.js`:
+  - `buildScanContext({ terms, csTerms, caseSensitive, wholeWordOnly })`
+    returns `{ regexCI, regexCS, caseSensitive, wholeWordOnly,
+    displayByKey, hasAny }`. `regexCI` honours the global flag;
+    `regexCS` is hard-wired to case-sensitive.
+  - `runScan(text, ctx)` runs both regexes, sorts by (start asc, length
+    desc, CS-wins-tie), and emits non-overlapping matches each tagged
+    with an opaque internal `key` of the form `ci:<lower>` or
+    `cs:<exact>`.
+  - `keyForMatch(pool, text, caseSensitive)` is the canonical key
+    builder. Internal keys are the source of truth for bookkeeping,
+    popup payload, and `scrollToMatch`. UI never displays the prefix.
+- **Display preservation**: `ctx.displayByKey` maps internal key →
+  user-originally-typed term so the popup shows what the user typed,
+  not the lowercased / matched form.
+- **Popup contract**: the `scanResult` and `getMatches` payload is now
+  `[{ key, term, count, cs }]`. The popup renders a small `Aa` badge
+  next to any entry where `cs === true`. `scrollToMatch` accepts
+  `{ key, index }` (was `{ term, index }`). Both popup and content
+  ship in v1.6.0 so there is no in-flight protocol mismatch.
+
+### 15.2 Visibility + removal reconciliation
+
+- **The problem fixed**: in v1.5.x, if a matched node was removed
+  (SPA tab swap, virtual scroll, "Load more" replacing a section) or
+  hidden (`display:none`, `visibility:hidden`, `[hidden]`,
+  `[aria-hidden="true"]`), the bookkeeping kept counting it. Badge,
+  popup, and banner all reported phantom matches.
+- **The fix**: `content.js` now runs a debounced **reconciliation
+  pass** triggered by either (a) `removedNodes` in a `childList`
+  mutation, or (b) any attribute change matching the filter
+  `["hidden", "aria-hidden", "style", "class"]`. The observer config
+  is extended with `attributes: true, attributeFilter: [...]` for case (b).
+- **`isEffectivelyVisible(node)`** walks ancestors up to `<body>` and
+  returns false if any ancestor is `[hidden]`, has
+  `aria-hidden="true"`, or has computed `display:none` /
+  `visibility:hidden|collapse`. Opacity and offscreen scroll are
+  deliberately **not** treated as hidden (stylistic / transient).
+- **Pure-helper contract**: `reconcileBookkeeping(book, isLive)` drops
+  dead entries from a Map<key, entry[]>, removes empty keys, and
+  returns `{ changed, matchCounts }`. Extracted so reconcile can be
+  unit-tested without JSDOM.
+- **CSS-Highlight registry cleanup**: dead `Range` objects are also
+  evicted from the live `Highlight` so the page paints nothing where
+  the match no longer exists.
+- **Popup live updates**: the popup listens on
+  `chrome.runtime.onMessage` for `scanResult` messages whose
+  `sender.tab.id === currentTabId` and re-renders in place. This makes
+  the count drop the moment the user clicks the tab that hides the
+  match - no rescan needed.
+
+### 15.3 What was deliberately NOT done
+
+- **Tier B IntersectionObserver per match** was scoped out. The Tier A
+  ancestor walk catches every common tab/accordion pattern at much
+  lower memory cost. If a user reports a case Tier A misses
+  (scrolled-offscreen virtualised list where the entry is still in the
+  DOM but visually clipped), revisit Tier B behind a Settings toggle.
+- **Per-pool MAX_TERMS** stays at 5000 per list (so theoretical max is
+  10K combined per scope). The 1 MiB import file cap bounds total
+  absolute size.
+
+## 16. What an agent should do before committing
 
 1. `node --test test/*.test.js` - all tests must pass. (Don't use
    `node --test test/` - Node 22.22+ interprets the bare directory as a
