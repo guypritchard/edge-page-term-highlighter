@@ -54,8 +54,10 @@ release pipeline, or the manifest.
 ├── lib/
 │   ├── config.js              # Shared storage helpers (BTWConfig namespace).
 │   └── matching.js            # PURE helpers (BTWMatching): regex builder,
-│                              #   hostMatches, DEFAULT_CONFIG, sanitiser.
-│                              #   No chrome.*, no DOM - unit tested.
+│                              #   term parsing (cs: prefix), URL + scope
+│                              #   parsing, hostMatches, DEFAULT_CONFIG,
+│                              #   sanitiser. No chrome.*, no DOM - unit
+│                              #   tested.
 ├── popup.html / popup.js      # Toolbar popup. Match list + scroll-to.
 ├── options.html / options.js  # Full settings page (incl. storage area
 │                              #   radio). Uses BTWMatching for sanitising
@@ -106,10 +108,11 @@ exports via `module.exports` when running in Node, for the test suite.
   deletes it from the old. Quota errors (sync limit ~100 KB) must surface
   to the UI and the toggle must revert.
 - On `chrome.runtime.onInstalled`:
-  - `reason === "install"`: pin pointer to `"local"`.
-  - `reason === "update"` and pointer unset: detect where the existing
-    config currently lives and pin to that area, so nothing silently
-    disappears for users upgrading from <= v1.4.0.
+  - Pointer unset (fresh install OR upgrade): pin pointer to `"local"`.
+  - v2.0.0 removed the v1.4.0 "detect-where-the-config-already-lives"
+    branch (sole user, clean break). If you reintroduce multi-user
+    support and want graceful upgrades again, restore it from git
+    history at tag `v1.6.0`.
 
 ### Storage threat model summary
 
@@ -170,29 +173,45 @@ highlight spans, and marker spans.
 - All matching helpers live in **`lib/matching.js`** (`BTWMatching`). They
   are pure functions, deterministic, side-effect free, and are exercised
   by `test/matching.test.js`.
-- Terms are de-duplicated case-insensitively (when matching is
-  case-insensitive) and sorted **longest first** before being joined with
-  `|`. This guarantees `"BAE Systems"` wins over `"BAE"` (JS regex
-  alternation is leftmost-first, not longest-first).
-- `wholeWordOnly` wraps the alternation in `\b...\b`. Acknowledged limit:
-  `\b` is ASCII-only. Replacing with `(?<![\p{L}\p{N}])...(?![\p{L}\p{N}])`
-  is a future improvement for non-Latin scripts.
-- Match counting buckets by the case-folded term key, so `"BAE"` and
-  `"bae"` count together when case-insensitive matching is on.
-- `hostMatches`: a hostname matches a pattern when the host **equals** the
-  pattern OR ends with `"." + pattern`. The previous `.includes()` fallback
-  was removed in v1.5.0 - it was a security footgun (a pattern of `google`
-  matched `evil-google.com`). Do not re-add it.
+- Case sensitivity is **per term**, not global. A term line starting with
+  `cs:` (case-insensitive prefix) is compiled into the case-sensitive
+  pool; everything else goes into the case-insensitive pool. The two
+  pools become two regexes that are run independently and merged by
+  `runScan` (non-overlapping, longest-match-first, `cs` wins ties).
+  See §17 for the full v2 contract.
+- Terms in each pool are de-duplicated (case-insensitively in the CI
+  pool, exactly in the CS pool) and sorted **longest first** before
+  being joined with `|`. This guarantees `"BAE Systems"` wins over
+  `"BAE"` (JS regex alternation is leftmost-first, not longest-first).
+- `wholeWordOnly` wraps each alternation in `\b...\b`. Acknowledged
+  limit: `\b` is ASCII-only. Replacing with
+  `(?<![\p{L}\p{N}])...(?![\p{L}\p{N}])` is a future improvement for
+  non-Latin scripts.
+- Match counting buckets by the opaque internal key (`ci:<lower>` or
+  `cs:<exact>`), so `"BAE"` and `"bae"` in the CI pool count together
+  while `"cs:NASA"` stays separate from a hypothetical `"cs:nasa"`.
+- `hostMatches`: a hostname matches a pattern when the host **equals**
+  the pattern OR ends with `"." + pattern`. The previous `.includes()`
+  fallback was removed in v1.5.0 - it was a security footgun (a pattern
+  of `google` matched `evil-google.com`). Do not re-add it.
 - `sanitizeImportedConfig` enforces a strict allowlist on imported JSON
   configs: unknown top-level keys are dropped, non-string terms are
-  rejected, URL-like garbage in hostnames is rejected, and hard caps
-  (`LIMITS` constant) prevent absurd term/host/rule counts. The options
-  page also caps file imports at 1 MiB.
+  rejected, invalid scope kinds / URL-like garbage in hostnames are
+  rejected, and hard caps (`LIMITS` constant: `MAX_PROFILE_TERMS=5000`,
+  `MAX_PROFILES=500`, plus per-field length caps) prevent absurd
+  configs. The options page also caps file imports at 1 MiB.
 
 ## 7. Popup, options, badge
 
 - Popup shows the per-term match list for the active tab, with a Jump
-  button that cycles through occurrences (`1/3`, `2/3`, ...).
+  button that cycles through occurrences (`1/3`, `2/3`, ...) and an
+  `Aa` badge next to case-sensitive terms.
+- Popup also has a **+ Add this page to a profile** button that writes
+  a one-shot prefill sentinel
+  (`chrome.storage.local.__btw_prefill = { host, scheme, path }`) and
+  opens the options page. Options reads + deletes the sentinel on
+  `DOMContentLoaded` and appends a new `wholeSite` profile scoped to
+  that host. See §17.5.
 - The popup talks to the active tab's content script via
   `chrome.tabs.sendMessage({ type: "getMatches" | "scrollToMatch" |
   "rescanNow" })`. If the content script is missing (e.g. on a page that
@@ -201,9 +220,11 @@ highlight spans, and marker spans.
 - The toolbar badge is set by the background service worker when it
   receives `{ type: "scanResult" }` from the content script. Badge is
   cleared on every navigation start.
-- Options page exposes: enabled / case sensitive / whole words only /
-  highlight markers / storage area radio / global terms / disabled hosts /
-  per-site rules / Export+Import JSON.
+- Options page exposes: enabled / whole words only / inline marker /
+  storage area radio / per-site profile cards (name + scope dropdown
+  with conditional fields + terms textarea) / Export+Import JSON.
+  Add/Remove profiles with the buttons; Save runs the result through
+  `sanitizeImportedConfig` before writing.
 
 ## 8. Versioning and release
 
@@ -254,13 +275,17 @@ version.
 3. Open `edge://extensions/`, click the reload (↻) icon on the extension
    card.
 
-## 9. Update + migration discipline
+## 9. Schema + config-shape discipline
 
-- Never change the shape of `config` without writing a migration that
-  fills in defaults for missing fields.
+- v2.0.0 made a deliberate clean break from the v1.x schema (sole user,
+  no migration). The new shape is documented in §17.1 and carries
+  `schemaVersion: 2`. If the schema needs to evolve **again**, decide
+  up-front whether to (a) bump `schemaVersion` and add a migration in
+  `BTWConfig.getConfig` / `background.js#onInstalled`, or (b) repeat
+  the clean-break approach if there are still no third-party users.
 - `BTWConfig.getConfig()` always returns either `null` or the saved
   object. Callers `Object.assign({}, BTWMatching.DEFAULT_CONFIG, config || {})`
-  so older shapes still work.
+  so missing top-level keys fall back to defaults.
 - **Single source of truth for defaults**: `BTWMatching.DEFAULT_CONFIG`
   (frozen) in `lib/matching.js`. `background.js` seeds first-install
   storage with it; `options.js` back-fills the form with it;
@@ -315,7 +340,7 @@ If/when we publish to the official store:
 
 These are valuable, not yet built:
 
-1. **`block` severity per rule** - interstitial page with Back / Continue.
+1. **`block` severity per profile** - interstitial page with Back / Continue.
 2. **Regex support via `re:` prefix** on individual terms.
 3. **Right-click "Add selection to banned terms"** context-menu.
 4. **Unicode word boundaries** for `wholeWordOnly`.
@@ -355,8 +380,15 @@ them without an explicit conversation.
 
 ## 15. Features shipped in v1.6.0
 
-Two cross-cutting changes landed together. Do not regress without an
-explicit conversation.
+> **Superseded by §17 (v2.0.0).** The acronym-mode config fields
+> (`globalCsTerms`, per-rule `csTerms`) and the v1.x global / per-rule /
+> disabled-hosts model described below were removed in v2.0.0. The
+> popup ↔ content `scanResult` / `getMatches` / `scrollToMatch` protocol
+> (§15.1 final bullet) and the visibility + removal reconciliation
+> (§15.2) were carried over to v2.0.0 unchanged and are still current.
+> Keep this section for historical context only.
+
+Two cross-cutting changes landed together in v1.6.0.
 
 ### 15.1 Acronym mode (per-list case sensitivity)
 
@@ -438,17 +470,21 @@ explicit conversation.
    module path and fails.)
 2. `node --check` every modified `.js` file.
 3. Load the extension via **Load unpacked** in Edge and confirm:
-   - Banner appears on a known-bad page.
-   - Inline ⚠️ marker appears beside each match (when markers enabled).
-   - Popup match list populates; **Jump** scrolls and flashes.
+   - On a page covered by a profile: banner appears, inline ⚠️ marker
+     appears beside each match (when the marker is enabled), popup
+     match list populates, **Jump** scrolls and flashes, `Aa` badge
+     appears next to `cs:` terms.
+   - On a page with no matching profile: nothing happens - no banner,
+     no badge, no console output. (Use the popup's **+ Add this page
+     to a profile** button to create one in one click.)
    - Toggling storage area in Settings migrates config and the popup
      still shows matches afterwards.
    - `edge://extensions/` shows no console errors from background or
      content script.
-3. Bump `manifest.json` version if behaviour changed.
-4. Update README / AGENTS.md if the user-facing model or developer
+4. Bump `manifest.json` version if behaviour changed.
+5. Update README / AGENTS.md if the user-facing model or developer
    workflow changed.
-5. Commit with a clear, scoped message; tag and push when ready to ship.
+6. Commit with a clear, scoped message; tag and push when ready to ship.
 
 ## 17. v2.0.0 redesign (current model)
 

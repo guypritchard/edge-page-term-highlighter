@@ -135,8 +135,8 @@ You can paste this directly into the **Import JSON** button on the Settings page
 ## How it works
 
 - A content script runs at `document_idle` on every page, reads the user's profiles, and **bails silently** if no profile matches the current URL. On matching pages it walks text nodes under `<body>` and either:
-  - Uses the **[CSS Custom Highlight API](https://developer.mozilla.org/en-US/docs/Web/API/CSS_Custom_Highlight_API)** (`CSS.highlights`) to paint the highlight without mutating the DOM (Edge / Chrome 105+, the default path), or
-  - Falls back to wrapping each match in a `<span>` on older engines.
+  - Uses the **[CSS Custom Highlight API](https://developer.mozilla.org/en-US/docs/Web/API/CSS_Custom_Highlight_API)** (`CSS.highlights`) to paint highlights without mutating the DOM (the default when the inline marker is disabled; `manifest.json` declares `minimum_chrome_version: "111"` so the API is always present), or
+  - Falls back to wrapping each match in a `<span>` when the inline marker is enabled (so the ⚠️ can sit immediately after each match).
 - A `MutationObserver` re-scans newly added subtrees as the page loads/changes (SPAs, infinite scroll, lazy-loaded content). `pushState`/`replaceState`/`popstate` trigger a full re-scan.
 - The same observer also watches for **node removals** and **visibility attribute changes** (`hidden`, `aria-hidden`, `style`, `class`). When matches drop out of the DOM or are hidden inside a collapsed accordion or swapped-away tab panel, a debounced reconciliation pass removes them from the count and updates the badge / popup in real time.
 - The banner is rendered inside a **closed Shadow DOM** so page scripts cannot read it via `document.querySelector`.
