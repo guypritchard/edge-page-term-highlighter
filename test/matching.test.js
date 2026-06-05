@@ -173,3 +173,118 @@ test("DEFAULT_CONFIG is frozen", () => {
   assert.throws(() => { M.DEFAULT_CONFIG.enabled = false; }, /./);
   assert.equal(M.DEFAULT_CONFIG.enabled, true);
 });
+
+// ---------- v1.6.0: csTerms ("acronym mode") ----------
+
+test("DEFAULT_CONFIG has globalCsTerms as an empty array", () => {
+  assert.ok(Array.isArray(M.DEFAULT_CONFIG.globalCsTerms));
+  assert.equal(M.DEFAULT_CONFIG.globalCsTerms.length, 0);
+});
+
+test("sanitizeImportedConfig: accepts globalCsTerms and back-fills when missing", () => {
+  const withIt = M.sanitizeImportedConfig({ globalCsTerms: ["NASA", "API"] });
+  assert.deepEqual(withIt.globalCsTerms, ["NASA", "API"]);
+  // Legacy config with no globalCsTerms field at all - must not throw, must default to [].
+  const legacy = M.sanitizeImportedConfig({ globalTerms: ["x"] });
+  assert.deepEqual(legacy.globalCsTerms, []);
+});
+
+test("sanitizeImportedConfig: drops non-string entries in globalCsTerms", () => {
+  const out = M.sanitizeImportedConfig({ globalCsTerms: ["OK", 42, null, "", "  ", "x".repeat(201)] });
+  assert.deepEqual(out.globalCsTerms, ["OK"]);
+});
+
+test("sanitizeSiteRules: accepts csTerms and back-fills to [] for legacy rules", () => {
+  const out = M.sanitizeSiteRules([
+    { pattern: "example.com", terms: ["a"], csTerms: ["NASA"] },
+    { pattern: "old.com", terms: ["b"] } // legacy shape, pre-1.6
+  ]);
+  assert.equal(out.length, 2);
+  assert.deepEqual(out[0].csTerms, ["NASA"]);
+  assert.deepEqual(out[1].csTerms, []);
+});
+
+test("buildScanContext: returns null pools when both lists are empty", () => {
+  const ctx = M.buildScanContext({ terms: [], csTerms: [] });
+  assert.equal(ctx.hasAny, false);
+  assert.equal(ctx.regexCI, null);
+  assert.equal(ctx.regexCS, null);
+});
+
+test("buildScanContext: builds a CI regex (with global flag) and a CS regex", () => {
+  const ctx = M.buildScanContext({ terms: ["banned"], csTerms: ["NASA"], caseSensitive: false, wholeWordOnly: true });
+  assert.ok(ctx.regexCI);
+  assert.ok(ctx.regexCS);
+  // CI regex is case-insensitive.
+  assert.ok(ctx.regexCI.flags.includes("i"));
+  // CS regex is NOT case-insensitive.
+  assert.equal(ctx.regexCS.flags.includes("i"), false);
+});
+
+test("buildScanContext: displayByKey preserves the user's typed spelling", () => {
+  const ctx = M.buildScanContext({ terms: ["Banned"], csTerms: ["NASA"], caseSensitive: false });
+  assert.equal(ctx.displayByKey.get("ci:banned"), "Banned");
+  assert.equal(ctx.displayByKey.get("cs:NASA"), "NASA");
+});
+
+test("runScan: CS pool matches only exact-case; CI pool ignores case", () => {
+  const ctx = M.buildScanContext({ terms: ["banned"], csTerms: ["NASA"], caseSensitive: false, wholeWordOnly: false });
+  const hits = M.runScan("BANNED talk about nasa and NASA today", ctx);
+  // "BANNED" via CI pool (any case), "NASA" via CS pool (only the uppercase one).
+  const keys = hits.map(h => h.key);
+  assert.ok(keys.includes("ci:banned"));
+  assert.ok(keys.includes("cs:NASA"));
+  // Lowercase "nasa" must NOT have produced a "cs:nasa" entry.
+  assert.equal(keys.some(k => k === "cs:nasa"), false);
+});
+
+test("runScan: emits non-overlapping matches, earliest first, longest wins on tie", () => {
+  const ctx = M.buildScanContext({ terms: ["BAE", "BAE Systems"], csTerms: [], wholeWordOnly: false });
+  const hits = M.runScan("BAE Systems is bigger than BAE alone", ctx);
+  assert.equal(hits.length, 2);
+  // First hit is the longer phrase at the leftmost position.
+  assert.equal(hits[0].text.toLowerCase(), "bae systems");
+  assert.equal(hits[1].text.toLowerCase(), "bae");
+  // Second hit starts after the first ends.
+  assert.ok(hits[1].start >= hits[0].end);
+});
+
+test("runScan: at the same start, CS pool wins the tie over CI", () => {
+  const ctx = M.buildScanContext({ terms: ["nasa"], csTerms: ["NASA"], caseSensitive: false, wholeWordOnly: false });
+  const hits = M.runScan("NASA launches today", ctx);
+  // Both pools would match "NASA" at index 0 with the same length; CS wins.
+  assert.equal(hits.length, 1);
+  assert.equal(hits[0].pool, "cs");
+  assert.equal(hits[0].key, "cs:NASA");
+});
+
+test("runScan: empty / no-context inputs return []", () => {
+  assert.deepEqual(M.runScan("", null), []);
+  assert.deepEqual(M.runScan("hello", M.buildScanContext({ terms: [], csTerms: [] })), []);
+  assert.deepEqual(M.runScan("", M.buildScanContext({ terms: ["x"], csTerms: [] })), []);
+});
+
+// ---------- v1.6.0: reconcileBookkeeping ----------
+
+test("reconcileBookkeeping: drops dead entries and recomputes counts", () => {
+  const book = new Map();
+  book.set("ci:a", [{ id: 1, live: true }, { id: 2, live: false }, { id: 3, live: true }]);
+  book.set("ci:b", [{ id: 4, live: false }]); // whole key dies
+  book.set("ci:c", [{ id: 5, live: true }]);  // unchanged
+  const res = M.reconcileBookkeeping(book, (e) => e.live);
+  assert.equal(res.changed, true);
+  assert.equal(book.has("ci:b"), false, "empty key should be removed entirely");
+  assert.equal(book.get("ci:a").length, 2);
+  assert.equal(book.get("ci:c").length, 1);
+  assert.equal(res.matchCounts.get("ci:a"), 2);
+  assert.equal(res.matchCounts.get("ci:c"), 1);
+  assert.equal(res.matchCounts.has("ci:b"), false);
+});
+
+test("reconcileBookkeeping: returns changed=false when nothing died", () => {
+  const book = new Map();
+  book.set("ci:a", [{ live: true }, { live: true }]);
+  const res = M.reconcileBookkeeping(book, (e) => e.live);
+  assert.equal(res.changed, false);
+  assert.equal(res.matchCounts.get("ci:a"), 2);
+});

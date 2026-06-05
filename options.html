@@ -41,8 +41,12 @@
     <p class="muted">Local-only is more private (your terms never reach Microsoft's sync servers). Switching migrates your existing configuration to the new storage area.</p>
 
     <h2>Global banned terms</h2>
-    <p class="muted">One term or phrase per line. Applies to every page.</p>
+    <p class="muted">One term or phrase per line. Applies to every page. Case sensitivity follows the <strong>Case sensitive</strong> checkbox above.</p>
     <textarea id="globalTerms" placeholder="example&#10;another banned phrase"></textarea>
+
+    <h2>Global banned terms - case sensitive (acronym mode)</h2>
+    <p class="muted">One term per line. Always matched case-sensitively, regardless of the global <strong>Case sensitive</strong> checkbox. Useful for acronyms like <code>NASA</code> or <code>API</code> that you don't want matching <code>nasa</code> or <code>api</code> in ordinary prose.</p>
+    <textarea id="globalCsTerms" placeholder="NASA&#10;API&#10;BAE"></textarea>
 
     <h2>Disabled sites</h2>
     <p class="muted">Hostnames where scanning is fully skipped. One per line (e.g. <code>mail.google.com</code>).</p>

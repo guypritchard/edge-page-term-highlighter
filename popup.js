@@ -17,23 +17,36 @@ async function askTab(tabId, msg) {
 }
 
 // Per-term step counter so repeated clicks cycle through occurrences.
-const stepByTerm = new Map();
+// Keyed by the opaque internal key (e.g. "ci:nasa" or "cs:NASA") to keep
+// CI/CS pools separate when the same word appears in both lists.
+const stepByKey = new Map();
+let currentTabId = null;
 
 function renderMatches(matches, tabId) {
   const wrap = document.getElementById("matchList");
-  wrap.innerHTML = "";
+  wrap.textContent = "";
   if (!matches || matches.length === 0) {
-    wrap.innerHTML = '<div class="none">No matches.</div>';
+    const none = document.createElement("div");
+    none.className = "none";
+    none.textContent = "No matches.";
+    wrap.appendChild(none);
     return;
   }
-  // Sort by count desc.
-  matches.sort((a, b) => b.count - a.count);
+  // Sort by count desc, then by term asc for a stable display order.
+  matches.sort((a, b) => (b.count - a.count) || a.term.localeCompare(b.term));
   for (const m of matches) {
     const row = document.createElement("div");
     row.className = "match";
     const term = document.createElement("span");
     term.className = "term";
     term.textContent = m.term;
+    if (m.cs) {
+      const badge = document.createElement("span");
+      badge.className = "cs-badge";
+      badge.textContent = "Aa";
+      badge.title = "Case-sensitive (acronym mode)";
+      term.appendChild(badge);
+    }
     const count = document.createElement("span");
     count.className = "count";
     count.textContent = String(m.count);
@@ -41,9 +54,10 @@ function renderMatches(matches, tabId) {
     btn.textContent = "Jump";
     btn.title = "Scroll to the next occurrence on the page";
     btn.addEventListener("click", async () => {
-      const next = (stepByTerm.get(m.term) || 0);
-      stepByTerm.set(m.term, next + 1);
-      const res = await askTab(tabId, { type: "scrollToMatch", term: m.term, index: next });
+      const key = m.key;
+      const next = (stepByKey.get(key) || 0);
+      stepByKey.set(key, next + 1);
+      const res = await askTab(tabId, { type: "scrollToMatch", key: key, index: next });
       if (res && res.ok) {
         btn.textContent = `${res.index + 1}/${res.count}`;
         setTimeout(() => { btn.textContent = "Jump"; }, 1500);
@@ -56,6 +70,16 @@ function renderMatches(matches, tabId) {
   }
 }
 
+// Listen for live scanResult broadcasts from the active tab's content
+// script. Re-render the list in place so tab swaps, infinite scroll, and
+// DOM removals reflect immediately while the popup is open.
+chrome.runtime.onMessage.addListener((msg, sender) => {
+  if (!sender || sender.id !== chrome.runtime.id) return;
+  if (!msg || msg.type !== "scanResult") return;
+  if (!sender.tab || sender.tab.id !== currentTabId) return;
+  renderMatches(Array.isArray(msg.matches) ? msg.matches : [], currentTabId);
+});
+
 document.addEventListener("DOMContentLoaded", async () => {
   const enabledEl = document.getElementById("enabled");
   const hostInfo = document.getElementById("hostInfo");
@@ -65,6 +89,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   enabledEl.checked = !!config.enabled;
 
   const tab = await currentTab();
+  currentTabId = tab && typeof tab.id === "number" ? tab.id : null;
   const host = hostnameOf(tab?.url || "");
   hostInfo.textContent = host ? `Site: ${host}` : "";
 

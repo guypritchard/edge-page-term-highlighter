@@ -37,7 +37,8 @@ That's it. Your configuration is preserved.
 - 🌐 **Global** banned terms list
 - 🎯 **Per-site rules** - extra terms that only fire on specific hostnames (and subdomains)
 - 🚫 **Per-site disable** - skip scanning entirely on chosen hosts
-- 🔠 Case-sensitive and whole-word matching toggles
+- 🔠 Case-sensitive and whole-word matching toggles, plus **acronym mode** (always-case-sensitive terms like `NASA`, `API`)
+- 👁️ **Visibility-aware counts** - matches inside collapsed accordions, hidden tab panels, or DOM subtrees that get removed by an SPA are dropped from the count automatically
 - 💾 Import / Export configuration as JSON
 - 🔒 Zero telemetry, no remote calls, no analytics
 
@@ -73,11 +74,12 @@ Open the **Settings** page (right-click extension icon -> *Extension options*, o
 | Setting | Description |
 |---|---|
 | **Extension enabled** | Master on/off switch. |
-| **Case sensitive** | When off, "Foo" matches "foo", "FOO", etc. |
+| **Case sensitive** | When off, "Foo" matches "foo", "FOO", etc. Applies to the regular term lists. |
 | **Whole words only** | When on, "cat" won't match inside "category". |
-| **Global banned terms** | One term/phrase per line. Applies to every page. |
+| **Global banned terms** | One term/phrase per line. Applies to every page. Case sensitivity follows the **Case sensitive** checkbox. |
+| **Global banned terms - case sensitive (acronym mode)** | One term per line. Always matched case-sensitively, regardless of the **Case sensitive** checkbox. Use this for acronyms like `NASA` / `API` / `BAE` that you don't want matching `nasa` / `api` / `bae` in ordinary prose. |
 | **Disabled sites** | Hostnames where scanning is skipped (e.g. `mail.google.com`). |
-| **Per-site rules** | Hostname pattern + extra terms that only trigger on that host or its subdomains. |
+| **Per-site rules** | Hostname pattern + extra terms (regular and case-sensitive) that only trigger on that host or its subdomains. |
 | **Export / Import JSON** | Back up or share configuration between machines. |
 
 ### Hostname matching
@@ -97,10 +99,11 @@ Substring matching was removed in v1.5.0 because it was a security footgun (a pa
   "caseSensitive": false,
   "wholeWordOnly": true,
   "globalTerms": ["confidential", "internal use only"],
+  "globalCsTerms": ["NASA", "API"],
   "disabledHosts": ["mail.google.com"],
   "siteRules": [
-    { "pattern": "reddit.com",   "terms": ["spoiler"] },
-    { "pattern": "news.ycombinator.com", "terms": ["acquired", "shutdown"] }
+    { "pattern": "reddit.com",   "terms": ["spoiler"], "csTerms": [] },
+    { "pattern": "news.ycombinator.com", "terms": ["acquired", "shutdown"], "csTerms": ["IPO"] }
   ]
 }
 ```
@@ -115,6 +118,7 @@ You can paste this directly into the **Import JSON** button on the Settings page
   - Uses the **[CSS Custom Highlight API](https://developer.mozilla.org/en-US/docs/Web/API/CSS_Custom_Highlight_API)** (`CSS.highlights`) to paint the highlight without mutating the DOM (Edge / Chrome 105+, the default path), or
   - Falls back to wrapping each match in a `<span>` on older engines.
 - A `MutationObserver` re-scans newly added subtrees as the page loads/changes (SPAs, infinite scroll, lazy-loaded content). `pushState`/`replaceState`/`popstate` trigger a full re-scan.
+- The same observer also watches for **node removals** and **visibility attribute changes** (`hidden`, `aria-hidden`, `style`, `class`). When matches drop out of the DOM or are hidden inside a collapsed accordion or swapped-away tab panel, a debounced reconciliation pass removes them from the count and updates the badge / popup in real time.
 - The banner is rendered inside a **closed Shadow DOM** so page scripts cannot read it via `document.querySelector`.
 - Configuration is loaded via the shared helper in `lib/config.js`, which reads from the user's chosen storage area (local by default; opt-in browser sync).
 
@@ -192,7 +196,7 @@ Open an issue if you want either of those prioritised.
 ## Running the tests
 
 ```bash
-node --test test/
+node --test test/*.test.js
 ```
 
 No dependencies. Uses the Node.js built-in test runner.
