@@ -1,5 +1,5 @@
 // Unit tests for lib/config.js. We stub the chrome.* surface that
-// BTWConfig touches, then load the script via vm so it binds against our
+// PTHConfig touches, then load the script via vm so it binds against our
 // stub instead of a real extension API.
 const test = require("node:test");
 const assert = require("node:assert/strict");
@@ -43,37 +43,37 @@ function loadConfig() {
   };
   vm.createContext(sandbox);
   vm.runInContext(code, sandbox);
-  return { BTWConfig: sandbox.self.BTWConfig, chrome: sandbox.chrome };
+  return { PTHConfig: sandbox.self.PTHConfig, chrome: sandbox.chrome };
 }
 
 test("getActiveAreaName defaults to 'local'", async () => {
-  const { BTWConfig } = loadConfig();
-  assert.equal(await BTWConfig.getActiveAreaName(), "local");
+  const { PTHConfig } = loadConfig();
+  assert.equal(await PTHConfig.getActiveAreaName(), "local");
 });
 
 test("getActiveAreaName returns 'sync' when pointer is sync", async () => {
-  const { BTWConfig, chrome } = loadConfig();
+  const { PTHConfig, chrome } = loadConfig();
   await chrome.storage.local.set({ storageArea: "sync" });
-  assert.equal(await BTWConfig.getActiveAreaName(), "sync");
+  assert.equal(await PTHConfig.getActiveAreaName(), "sync");
 });
 
 test("getActiveAreaName coerces unknown values to 'local'", async () => {
-  const { BTWConfig, chrome } = loadConfig();
+  const { PTHConfig, chrome } = loadConfig();
   await chrome.storage.local.set({ storageArea: "weird" });
-  assert.equal(await BTWConfig.getActiveAreaName(), "local");
+  assert.equal(await PTHConfig.getActiveAreaName(), "local");
 });
 
 test("setConfig / getConfig round trip in local", async () => {
-  const { BTWConfig } = loadConfig();
-  await BTWConfig.setConfig({ enabled: true, globalTerms: ["a"] });
-  const c = await BTWConfig.getConfig();
+  const { PTHConfig } = loadConfig();
+  await PTHConfig.setConfig({ enabled: true, globalTerms: ["a"] });
+  const c = await PTHConfig.getConfig();
   assert.deepEqual(c, { enabled: true, globalTerms: ["a"] });
 });
 
 test("setActiveAreaName migrates config from local to sync", async () => {
-  const { BTWConfig, chrome } = loadConfig();
-  await BTWConfig.setConfig({ enabled: true, globalTerms: ["x"] });
-  const r = await BTWConfig.setActiveAreaName("sync");
+  const { PTHConfig, chrome } = loadConfig();
+  await PTHConfig.setConfig({ enabled: true, globalTerms: ["x"] });
+  const r = await PTHConfig.setActiveAreaName("sync");
   assert.equal(r.ok, true);
   // Old area should no longer have the config.
   assert.equal(chrome.storage.local._store.has("config"), false);
@@ -84,17 +84,17 @@ test("setActiveAreaName migrates config from local to sync", async () => {
 });
 
 test("setActiveAreaName is a no-op when already in target area", async () => {
-  const { BTWConfig } = loadConfig();
-  const r = await BTWConfig.setActiveAreaName("local");
+  const { PTHConfig } = loadConfig();
+  const r = await PTHConfig.setActiveAreaName("local");
   assert.equal(r.ok, true);
   assert.equal(r.unchanged, true);
 });
 
 test("setActiveAreaName surfaces quota / set errors", async () => {
-  const { BTWConfig, chrome } = loadConfig();
-  await BTWConfig.setConfig({ big: "data" });
+  const { PTHConfig, chrome } = loadConfig();
+  await PTHConfig.setConfig({ big: "data" });
   chrome.storage.sync.set = async () => { throw new Error("QUOTA_BYTES exceeded"); };
-  const r = await BTWConfig.setActiveAreaName("sync");
+  const r = await PTHConfig.setActiveAreaName("sync");
   assert.equal(r.ok, false);
   assert.match(r.error, /QUOTA/);
   // On failure, the source area should NOT have been wiped.

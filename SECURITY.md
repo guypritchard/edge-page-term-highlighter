@@ -7,14 +7,14 @@ Thank you for taking the time to report a vulnerability.
 Only the **latest published release** receives security fixes. Older
 releases are not patched - please upgrade.
 
-See [Releases](https://github.com/guypritchard/edge-banned-terms-warning/releases/latest).
+See [Releases](https://github.com/guypritchard/edge-page-term-highlighter/releases/latest).
 
 ## Reporting a vulnerability
 
 **Please do not open a public issue.**
 
 Use GitHub's private vulnerability reporting:
-[Report a vulnerability](https://github.com/guypritchard/edge-banned-terms-warning/security/advisories/new).
+[Report a vulnerability](https://github.com/guypritchard/edge-page-term-highlighter/security/advisories/new).
 
 If for any reason you cannot use that form, email
 `guy.pritchard@users.noreply.github.com` with:

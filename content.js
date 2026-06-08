@@ -6,14 +6,14 @@
 //         Per-term `cs:` prefix decides case sensitivity.
 //         Visibility-aware reconciliation (v1.6.0) preserved.
 (function () {
-  if (window.__bannedTermsScanRan) return;
-  window.__bannedTermsScanRan = true;
+  if (window.__pthScanRan) return;
+  window.__pthScanRan = true;
 
-  const MARKER_CLASS = "__btw_mk__";
-  const FALLBACK_HIGHLIGHT_CLASS = "__btw_hl__";
-  const SHADOW_HOST_ID = "__btw_shadow_host__";
-  const HL_NAME = "btw-match";
-  const HL_FLASH = "btw-match-flash";
+  const MARKER_CLASS = "__pth_mk__";
+  const FALLBACK_HIGHLIGHT_CLASS = "__pth_hl__";
+  const SHADOW_HOST_ID = "__pth_shadow_host__";
+  const HL_NAME = "pth-match";
+  const HL_FLASH = "pth-match-flash";
   const SKIP_TAGS = new Set([
     "SCRIPT", "STYLE", "NOSCRIPT", "TEXTAREA", "INPUT", "SELECT",
     "CODE", "PRE", "IFRAME", "OBJECT", "EMBED", "SVG", "CANVAS"
@@ -42,7 +42,7 @@
     bannerDismissed: false
   };
 
-  const { buildScanContext, runScan, reconcileBookkeeping, profilesForUrl } = BTWMatching;
+  const { buildScanContext, runScan, reconcileBookkeeping, profilesForUrl } = PTHMatching;
 
   function shouldSkipElement(el) {
     while (el && el.nodeType === 1) {
@@ -80,9 +80,9 @@
     flashHighlight = new Highlight();
     CSS.highlights.set(HL_NAME, highlight);
     CSS.highlights.set(HL_FLASH, flashHighlight);
-    if (!document.getElementById("__btw_hl_style__")) {
+    if (!document.getElementById("__pth_hl_style__")) {
       const style = document.createElement("style");
-      style.id = "__btw_hl_style__";
+      style.id = "__pth_hl_style__";
       style.textContent = `
         ::highlight(${HL_NAME}) { background-color: #fff3a3; color: #000; text-shadow: none; }
         ::highlight(${HL_FLASH}) { background-color: #c0392b; color: #fff; }
@@ -150,7 +150,7 @@
     wrap.className = "banner"; wrap.setAttribute("role", "alert");
     const icon = document.createElement("span"); icon.className = "icon"; icon.textContent = "\u26A0\uFE0F";
     const text = document.createElement("span"); text.className = "msg";
-    text.textContent = `Banned content warning: ${total} match${total === 1 ? "" : "es"} found - ${summary}${more}`;
+    text.textContent = `Highlighted terms detected: ${total} match${total === 1 ? "" : "es"} found - ${summary}${more}`;
     const close = document.createElement("button"); close.textContent = "Dismiss";
     close.addEventListener("click", () => { state.bannerDismissed = true; removeBanner(); });
     wrap.appendChild(icon); wrap.appendChild(text); wrap.appendChild(close);
@@ -370,7 +370,7 @@
 
   async function run() {
     reset();
-    const config = await BTWConfig.getConfig();
+    const config = await PTHConfig.getConfig();
     if (!config || !config.enabled) return;
     const profiles = profilesForUrl(config.profiles || [], location.href);
     if (profiles.length === 0) return; // opt-in: silent on every site without a matching profile
@@ -405,23 +405,23 @@
   });
 
   function hookHistory() {
-    const fire = () => window.dispatchEvent(new Event("__bannedTermsLocationChange"));
+    const fire = () => window.dispatchEvent(new Event("__pthLocationChange"));
     const wrap = (name) => {
       const orig = history[name];
-      if (!orig || orig.__bannedTermsWrapped) return;
+      if (!orig || orig.__pthWrapped) return;
       const wrapped = function () { const r = orig.apply(this, arguments); fire(); return r; };
-      wrapped.__bannedTermsWrapped = true;
+      wrapped.__pthWrapped = true;
       history[name] = wrapped;
     };
     wrap("pushState"); wrap("replaceState");
     window.addEventListener("popstate", fire);
     let lastUrl = location.href;
-    window.addEventListener("__bannedTermsLocationChange", () => {
+    window.addEventListener("__pthLocationChange", () => {
       if (location.href !== lastUrl) { lastUrl = location.href; setTimeout(run, 100); }
     });
   }
 
-  BTWConfig.onConfigChanged(() => run());
+  PTHConfig.onConfigChanged(() => run());
 
   function start() { hookHistory(); run(); }
   if (document.readyState === "complete" || document.readyState === "interactive") start();

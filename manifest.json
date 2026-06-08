@@ -1,16 +1,16 @@
 {
   "manifest_version": 3,
-  "name": "Banned Terms Warning",
-  "version": "2.0.0",
+  "name": "Page Term Highlighter",
+  "version": "2.1.0",
   "minimum_chrome_version": "111",
-  "description": "Warns when configured banned terms or phrases appear on a web page. Per-site profiles with optional per-term case sensitivity.",
+  "description": "Highlights configured terms or phrases when they appear on a web page. Per-site profiles with optional per-term case sensitivity.",
   "permissions": ["storage", "activeTab", "scripting"],
   "host_permissions": ["<all_urls>"],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
   },
   "action": {
-    "default_title": "Banned Terms Warning",
+    "default_title": "Page Term Highlighter",
     "default_popup": "popup.html",
     "default_icon": {
       "16": "icons/icon16.png",

@@ -1,14 +1,16 @@
-# Banned Terms Warning - Microsoft Edge Extension
+# Page Term Highlighter - Microsoft Edge Extension
 
-[![Validate](https://github.com/guypritchard/edge-banned-terms-warning/actions/workflows/validate.yml/badge.svg)](https://github.com/guypritchard/edge-banned-terms-warning/actions/workflows/validate.yml)
-[![Release](https://github.com/guypritchard/edge-banned-terms-warning/actions/workflows/release.yml/badge.svg)](https://github.com/guypritchard/edge-banned-terms-warning/actions/workflows/release.yml)
-[![Latest Release](https://badgen.net/github/release/guypritchard/edge-banned-terms-warning/stable)](https://github.com/guypritchard/edge-banned-terms-warning/releases/latest)
+[![Validate](https://github.com/guypritchard/edge-page-term-highlighter/actions/workflows/validate.yml/badge.svg)](https://github.com/guypritchard/edge-page-term-highlighter/actions/workflows/validate.yml)
+[![Release](https://github.com/guypritchard/edge-page-term-highlighter/actions/workflows/release.yml/badge.svg)](https://github.com/guypritchard/edge-page-term-highlighter/actions/workflows/release.yml)
+[![Latest Release](https://badgen.net/github/release/guypritchard/edge-page-term-highlighter/stable)](https://github.com/guypritchard/edge-page-term-highlighter/releases/latest)
 
-A Microsoft Edge / Chromium browser extension (Manifest V3) that scans the visible text of every page you load and shows a red ⚠️ warning banner at the top when any of your configured **banned terms** appear.
+A Microsoft Edge / Chromium browser extension (Manifest V3) that scans the visible text of every page you load and shows a red ⚠️ banner at the top when any of your configured **terms** appear.
 
 The extension is **opt-in by site**: it does nothing on pages where no profile of yours applies. You define one or more **profiles**, each targeting a scope (whole site, just a hostname, a section of a site, an exact URL, an advanced match pattern, or any URL) with a list of terms to flag on those pages.
 
 > 100% local by default. No data leaves your browser. Your configuration is stored on this device only; cross-device sync via your browser account is available as an opt-in.
+
+> **Renamed in v2.1.0.** Previously published as *Banned Terms Warning* at `edge-banned-terms-warning`. The old repository URL still redirects. No configuration or behaviour changed.
 
 ---
 
@@ -16,15 +18,15 @@ The extension is **opt-in by site**: it does nothing on pages where no profile o
 
 ### First-time install (≈30 seconds)
 
-1. Download the latest ZIP: **[edge-banned-terms-warning-X.Y.Z.zip](https://github.com/guypritchard/edge-banned-terms-warning/releases/latest)**.
-2. **Extract** it to a folder you'll keep (e.g. `C:\Tools\banned-terms-warning\`). Edge loads the extension from this folder - don't delete or move it.
+1. Download the latest ZIP: **[edge-page-term-highlighter-X.Y.Z.zip](https://github.com/guypritchard/edge-page-term-highlighter/releases/latest)**.
+2. **Extract** it to a folder you'll keep (e.g. `C:\Tools\page-term-highlighter\`). Edge loads the extension from this folder - don't delete or move it.
 3. Open `edge://extensions/`, turn on **Developer mode** (bottom-left).
 4. Click **Load unpacked** and select the extracted folder.
-5. Click the extension icon → **Settings** to add your banned terms.
+5. Click the extension icon → **Settings** to add the terms you want highlighted.
 
 ### Upgrade to a new version (≈10 seconds)
 
-1. Download the new ZIP from **[Releases](https://github.com/guypritchard/edge-banned-terms-warning/releases/latest)**.
+1. Download the new ZIP from **[Releases](https://github.com/guypritchard/edge-page-term-highlighter/releases/latest)**.
 2. **Extract over the same folder** you used the first time (replace all files).
 3. Open `edge://extensions/` and click the **reload (↻)** icon on the extension card.
 
@@ -58,13 +60,13 @@ Each release also publishes a `.zip.sha256` file. To verify the ZIP wasn't tampe
 
 ```powershell
 # Windows PowerShell
-Get-FileHash edge-banned-terms-warning-X.Y.Z.zip -Algorithm SHA256
-# Compare the output against the contents of edge-banned-terms-warning-X.Y.Z.zip.sha256
+Get-FileHash edge-page-term-highlighter-X.Y.Z.zip -Algorithm SHA256
+# Compare the output against the contents of edge-page-term-highlighter-X.Y.Z.zip.sha256
 ```
 
 ```bash
 # macOS / Linux
-shasum -a 256 -c edge-banned-terms-warning-X.Y.Z.zip.sha256
+shasum -a 256 -c edge-page-term-highlighter-X.Y.Z.zip.sha256
 ```
 
 ---
@@ -146,7 +148,7 @@ You can paste this directly into the **Import JSON** button on the Settings page
 
 ## Security model
 
-This extension stores your banned-terms list in your browser's extension storage and (optionally) paints highlight markers on web pages. Here is what is and isn't protected.
+This extension stores your list of terms in your browser's extension storage and (optionally) paints highlight markers on web pages. Here is what is and isn't protected.
 
 ### Protected against
 
@@ -162,7 +164,7 @@ This extension stores your banned-terms list in your browser's extension storage
 
 ### Residual risks
 
-- **Visible-extension presence.** If markers are enabled, the page sees a `<span class="__btw_mk__">⚠️</span>` next to each match. The page can count these but learns nothing about which words triggered them, nor any other configured term. Disable markers in Settings if you want zero visible-extension fingerprint.
+- **Visible-extension presence.** If markers are enabled, the page sees a `<span class="__pth_mk__">⚠️</span>` next to each match. The page can count these but learns nothing about which words triggered them, nor any other configured term. Disable markers in Settings if you want zero visible-extension fingerprint.
 - **Local-machine access.** Anyone who can read your Edge profile (other apps you run, malware, forensic tools, an admin with disk access) can read the LevelDB store under `%LOCALAPPDATA%\Microsoft\Edge\User Data\Default\Local Extension Settings\<extension id>\`. Browser extension storage is not encrypted at rest.
 - **DevTools** on your own machine reads everything by design.
 - **Exported JSON** is plaintext on disk - treat it like any other secret.
@@ -201,7 +203,7 @@ Open an issue if you want either of those prioritised.
 ├── popup.html / popup.js  # Toolbar popup
 ├── options.html / options.js  # Settings page
 ├── lib/
-│   ├── config.js          # Storage area helper (BTWConfig)
+│   ├── config.js          # Storage area helper (PTHConfig)
 │   └── matching.js        # Pure helpers (regex, hostMatches, sanitiser)
 ├── test/                  # node:test unit tests
 ├── icons/                 # 16/48/128 px icons

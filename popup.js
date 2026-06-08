@@ -1,6 +1,6 @@
 // popup.js v2.0.0 - profile-based, no per-host disable.
-async function getConfig() { return (await BTWConfig.getConfig()) || {}; }
-async function setConfig(config) { await BTWConfig.setConfig(config); }
+async function getConfig() { return (await PTHConfig.getConfig()) || {}; }
+async function setConfig(config) { await PTHConfig.setConfig(config); }
 async function currentTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   return tab;
@@ -102,7 +102,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (!tab || !tab.id) return;
     let res = await askTab(tab.id, { type: "rescanNow" });
     if (!res) {
-      await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: () => { window.__bannedTermsScanRan = false; } });
+      await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: () => { window.__pthScanRan = false; } });
       await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content.js"] });
     }
     const data = await askTab(tab.id, { type: "getMatches" });

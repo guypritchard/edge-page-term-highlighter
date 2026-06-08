@@ -1,8 +1,8 @@
 // background.js - service worker.
-// Loads lib/config.js (BTWConfig) and lib/matching.js (BTWMatching).
+// Loads lib/config.js (PTHConfig) and lib/matching.js (PTHMatching).
 importScripts("lib/config.js", "lib/matching.js");
 
-const DEFAULT_CONFIG = BTWMatching.DEFAULT_CONFIG;
+const DEFAULT_CONFIG = PTHMatching.DEFAULT_CONFIG;
 
 chrome.runtime.onInstalled.addListener(async () => {
   // Pin storage pointer to local for privacy. v2.0.0 is a clean schema
@@ -11,9 +11,9 @@ chrome.runtime.onInstalled.addListener(async () => {
   if (!ptr.storageArea) {
     await chrome.storage.local.set({ storageArea: "local" });
   }
-  const existing = await BTWConfig.getConfig();
+  const existing = await PTHConfig.getConfig();
   if (!existing) {
-    await BTWConfig.setConfig(Object.assign({}, DEFAULT_CONFIG));
+    await PTHConfig.setConfig(Object.assign({}, DEFAULT_CONFIG));
   }
 });
 
@@ -31,11 +31,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     chrome.action.setBadgeText({ tabId, text: String(count) });
     chrome.action.setTitle({
       tabId,
-      title: `Banned Terms: ${count} match${count === 1 ? "" : "es"} on this page`
+      title: `Term matches: ${count} match${count === 1 ? "" : "es"} on this page`
     });
   } else {
     chrome.action.setBadgeText({ tabId, text: "" });
-    chrome.action.setTitle({ tabId, title: "Banned Terms Warning" });
+    chrome.action.setTitle({ tabId, title: "Page Term Highlighter" });
   }
   sendResponse({ ok: true });
   return true;

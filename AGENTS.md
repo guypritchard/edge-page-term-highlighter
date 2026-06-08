@@ -1,7 +1,7 @@
 # AGENTS.md
 
 Operating guide for AI coding agents (and humans) working on the
-**Banned Terms Warning** Microsoft Edge / Chromium extension.
+**Page Term Highlighter** Microsoft Edge / Chromium extension.
 
 This file captures every cross-cutting decision we have made about how the
 extension is built, packaged, released, and hardened. Read it in full before
@@ -13,7 +13,7 @@ release pipeline, or the manifest.
 ## 1. What this extension is
 
 - A **Manifest V3** browser extension that scans every page's visible text
-  for user-configured banned terms.
+  for user-configured terms.
 - On match: shows a red ⚠️ banner (in a closed shadow root), paints a
   highlight on each match, optionally injects a ⚠️ marker beside each
   match, and exposes the match list in the toolbar popup with
@@ -52,19 +52,19 @@ release pipeline, or the manifest.
 ├── content.js                 # Page scanner, highlight engine, marker UI,
 │                              #   MutationObserver, SPA hooks, popup IPC.
 ├── lib/
-│   ├── config.js              # Shared storage helpers (BTWConfig namespace).
-│   └── matching.js            # PURE helpers (BTWMatching): regex builder,
+│   ├── config.js              # Shared storage helpers (PTHConfig namespace).
+│   └── matching.js            # PURE helpers (PTHMatching): regex builder,
 │                              #   term parsing (cs: prefix), URL + scope
 │                              #   parsing, hostMatches, DEFAULT_CONFIG,
 │                              #   sanitiser. No chrome.*, no DOM - unit
 │                              #   tested.
 ├── popup.html / popup.js      # Toolbar popup. Match list + scroll-to.
 ├── options.html / options.js  # Full settings page (incl. storage area
-│                              #   radio). Uses BTWMatching for sanitising
+│                              #   radio). Uses PTHMatching for sanitising
 │                              #   imported JSON and saved config.
 ├── test/
-│   ├── matching.test.js       # node:test unit tests for BTWMatching.
-│   └── config.test.js         # node:test tests for BTWConfig with a
+│   ├── matching.test.js       # node:test unit tests for PTHMatching.
+│   └── config.test.js         # node:test tests for PTHConfig with a
 │                              #   chrome.storage stub loaded via vm.
 ├── icons/                     # 16 / 48 / 128 PNGs, generated locally.
 ├── .github/
@@ -97,13 +97,13 @@ exports via `module.exports` when running in Node, for the test suite.
 - A small pointer at `chrome.storage.local["storageArea"]` selects the
   active area: `"local"` (default) or `"sync"`.
 - The actual config lives at `chrome.storage.<area>["config"]`.
-- All reads/writes go through `BTWConfig` in `lib/config.js`. Never call
+- All reads/writes go through `PTHConfig` in `lib/config.js`. Never call
   `chrome.storage.sync.get` / `.set` / `.local.get` / `.local.set` for the
   `config` key directly from anywhere else. Always go through the helper.
-- `BTWConfig.onConfigChanged(cb)` invokes `cb` whenever the active config
+- `PTHConfig.onConfigChanged(cb)` invokes `cb` whenever the active config
   changes OR the area pointer flips - subscribe instead of listening to
   `chrome.storage.onChanged` ad-hoc.
-- When the user toggles the storage area, `BTWConfig.setActiveAreaName`
+- When the user toggles the storage area, `PTHConfig.setActiveAreaName`
   migrates the existing config from the old area to the new one and
   deletes it from the old. Quota errors (sync limit ~100 KB) must surface
   to the UI and the toggle must revert.
@@ -122,7 +122,7 @@ exports via `module.exports` when running in Node, for the test suite.
 | Web pages reading our config via the extension API           | Blocked (no API access). |
 | Web pages reading the banner DOM                             | Blocked (closed shadow root). |
 | Web pages recovering terms from injected attributes          | Blocked (no `title=`, no `data-*` terms). |
-| Web pages enumerating highlighted text via `querySelectorAll`| Mitigated when markers off (CSS Highlight path, no DOM). Visible when markers on (small `__btw_mk__` spans). |
+| Web pages enumerating highlighted text via `querySelectorAll`| Mitigated when markers off (CSS Highlight path, no DOM). Visible when markers on (small `__pth_mk__` spans). |
 | Local disk reads (other apps, malware, forensics)            | NOT protected. Browser extension storage is unencrypted at rest. |
 | Microsoft cloud sync (`storage.sync`)                        | NOT zero-knowledge. Off by default. |
 | Exported JSON file                                           | Plaintext. User responsibility. |
@@ -145,8 +145,8 @@ Two paths, selected at runtime:
 
 2. **Span wrapping path** - used in every other case (markers enabled, OR
    browser without CSS Custom Highlight API). Wraps each match in
-   `<span class="__btw_hl__">...</span>` and, when markers are enabled,
-   appends `<span class="__btw_mk__">⚠️</span>` immediately after.
+   `<span class="__pth_hl__">...</span>` and, when markers are enabled,
+   appends `<span class="__pth_mk__">⚠️</span>` immediately after.
    This path is the well-tested default that ships behaviour users expect.
 
 In both paths:
@@ -165,12 +165,12 @@ In both paths:
 
 `SCRIPT`, `STYLE`, `NOSCRIPT`, `TEXTAREA`, `INPUT`, `SELECT`, `CODE`,
 `PRE`, `IFRAME`, `OBJECT`, `EMBED`, `SVG`, `CANVAS`, and anything inside
-`contenteditable`. Also our own shadow host (`__btw_shadow_host__`),
+`contenteditable`. Also our own shadow host (`__pth_shadow_host__`),
 highlight spans, and marker spans.
 
 ## 6. Regex / matching rules
 
-- All matching helpers live in **`lib/matching.js`** (`BTWMatching`). They
+- All matching helpers live in **`lib/matching.js`** (`PTHMatching`). They
   are pure functions, deterministic, side-effect free, and are exercised
   by `test/matching.test.js`.
 - Case sensitivity is **per term**, not global. A term line starting with
@@ -208,7 +208,8 @@ highlight spans, and marker spans.
   `Aa` badge next to case-sensitive terms.
 - Popup also has a **+ Add this page to a profile** button that writes
   a one-shot prefill sentinel
-  (`chrome.storage.local.__btw_prefill = { host, scheme, path }`) and
+  (`chrome.storage.local.__btw_prefill = { host, scheme, path }`,
+  retained verbatim across the v2.1.0 rename - see §18) and
   opens the options page. Options reads + deletes the sentinel on
   `DOMContentLoaded` and appends a new `wholeSite` profile scoped to
   that host. See §17.5.
@@ -244,7 +245,7 @@ highlight spans, and marker spans.
   5. `rsync`s a clean staging tree excluding `.git`, `.github`, `dist`,
      `staging`, `test`, `AGENTS.md`, `SECURITY.md`, `README.md`,
      `LICENSE`, `.gitignore`.
-  6. Zips to `dist/edge-banned-terms-warning-<version>.zip`.
+  6. Zips to `dist/edge-page-term-highlighter-<version>.zip`.
   7. Generates a `.zip.sha256` checksum.
   8. Creates a GitHub Release with both files and install instructions.
 - `.github/workflows/validate.yml` runs on every push/PR: validates the
@@ -269,7 +270,7 @@ version.
 
 ### Update instructions communicated to users
 
-1. Download `edge-banned-terms-warning-<version>.zip` from the GitHub
+1. Download `edge-page-term-highlighter-<version>.zip` from the GitHub
    Release.
 2. Extract over the existing extension folder.
 3. Open `edge://extensions/`, click the reload (↻) icon on the extension
@@ -281,17 +282,17 @@ version.
   no migration). The new shape is documented in §17.1 and carries
   `schemaVersion: 2`. If the schema needs to evolve **again**, decide
   up-front whether to (a) bump `schemaVersion` and add a migration in
-  `BTWConfig.getConfig` / `background.js#onInstalled`, or (b) repeat
+  `PTHConfig.getConfig` / `background.js#onInstalled`, or (b) repeat
   the clean-break approach if there are still no third-party users.
-- `BTWConfig.getConfig()` always returns either `null` or the saved
-  object. Callers `Object.assign({}, BTWMatching.DEFAULT_CONFIG, config || {})`
+- `PTHConfig.getConfig()` always returns either `null` or the saved
+  object. Callers `Object.assign({}, PTHMatching.DEFAULT_CONFIG, config || {})`
   so missing top-level keys fall back to defaults.
-- **Single source of truth for defaults**: `BTWMatching.DEFAULT_CONFIG`
+- **Single source of truth for defaults**: `PTHMatching.DEFAULT_CONFIG`
   (frozen) in `lib/matching.js`. `background.js` seeds first-install
   storage with it; `options.js` back-fills the form with it;
   `sanitizeImportedConfig` validates against it.
 - When the storage area changes, every consumer must re-read via
-  `BTWConfig.getConfig()` (already wired via `onConfigChanged`).
+  `PTHConfig.getConfig()` (already wired via `onConfigChanged`).
 
 ## 10. Coding conventions
 
@@ -305,7 +306,7 @@ version.
 - Wrap `chrome.runtime.sendMessage` in `try {}` - it throws when no
   receiver is registered (common on tabs the content script doesn't run
   on, e.g. `chrome://` pages).
-- Public IDs / class names on injected DOM use the `__btw_*` prefix.
+- Public IDs / class names on injected DOM use the `__pth_*` prefix.
   Never include the configured term in the DOM as data.
 
 ## 11. Edge Add-ons store (not yet submitted)
@@ -317,7 +318,7 @@ If/when we publish to the official store:
   permission). It must state: "no data is collected or transmitted; all
   configuration stays in the browser's local extension storage".
 - Reviewer notes must explain `<all_urls>` (needed to scan every page's
-  visible text against the user-configured banned terms).
+  visible text against the user-configured terms).
 - Store listing assets: 300×300 logo, ≥1 screenshot 1280×800.
 - Bump `manifest.json` version for every submission - duplicate versions
   are rejected.
@@ -342,7 +343,7 @@ These are valuable, not yet built:
 
 1. **`block` severity per profile** - interstitial page with Back / Continue.
 2. **Regex support via `re:` prefix** on individual terms.
-3. **Right-click "Add selection to banned terms"** context-menu.
+3. **Right-click "Add selection to a profile"** context-menu.
 4. **Unicode word boundaries** for `wholeWordOnly`.
 5. **AES-GCM passphrase encryption** of the stored config.
 6. **Hash-only matching** (SHA-256 of each term).
@@ -514,7 +515,7 @@ were **removed**, not extended. There is no migration code (sole user).
 The global `caseSensitive` flag, `globalTerms`, `globalCsTerms`,
 `siteRules`, `disabledHosts`, and per-rule `csTerms` are all gone. Case
 sensitivity is now expressed **per term** via the `cs:` line prefix
-(see `BTWMatching.CS_PREFIX`).
+(see `PTHMatching.CS_PREFIX`).
 
 ### 17.2 Terms (cs: prefix)
 
@@ -529,7 +530,7 @@ sensitivity is now expressed **per term** via the `cs:` line prefix
 
 ### 17.3 Scope kinds
 
-Six canonical kinds in `BTWMatching.VALID_SCOPE_KINDS`. All shapes are
+Six canonical kinds in `PTHMatching.VALID_SCOPE_KINDS`. All shapes are
 JSON-safe; regex caches are built lazily on `scope.__pathRegex` inside
 `scopeMatchesUrl`.
 
@@ -589,3 +590,34 @@ focuses the terms textarea. Sentinel lives only in
 - No automatic migration from v1.x configs. Sole user; deleted in place.
 - No per-host disable. Users delete or rename the profile instead.
 - No regex-prefix support yet (see §13.2 follow-up).
+
+## 18. v2.1.0 rename (Banned Terms Warning -> Page Term Highlighter)
+
+v2.1.0 was a pure rebrand. No schema change, no migration, no behaviour
+change. The GitHub repo was renamed from `edge-banned-terms-warning` to
+`edge-page-term-highlighter` (`gh repo rename`; old URL still redirects),
+the product name in `manifest.json` / popup / options / banner was
+updated, and the JS / DOM namespaces were renamed:
+
+| Before               | After                |
+|----------------------|----------------------|
+| `BTWConfig`          | `PTHConfig`          |
+| `BTWMatching`        | `PTHMatching`        |
+| `__btw_hl__`         | `__pth_hl__`         |
+| `__btw_mk__`         | `__pth_mk__`         |
+| `__btw_shadow_host__`| `__pth_shadow_host__`|
+| `__btw_hl_style__`   | `__pth_hl_style__`   |
+| `btw-match` / `btw-match-flash` | `pth-match` / `pth-match-flash` |
+| `__bannedTermsScanRan` etc. window flags | `__pthScanRan` etc. |
+| Banner: "Banned content warning" | Banner: "Highlighted terms detected" |
+| ZIP: `edge-banned-terms-warning-*.zip` | ZIP: `edge-page-term-highlighter-*.zip` |
+
+**Deliberate exception**: the one-shot prefill sentinel storage key
+`chrome.storage.local.__btw_prefill` (§17.5) was kept verbatim. It is a
+transient handoff value written by the popup and deleted by the options
+page on read; never user-visible. Renaming it would have required either
+a migration shim or losing any in-flight prefill on the upgrade. Since
+it has zero user impact, the legacy name stays.
+
+Storage keys `config` and `storageArea` were also unchanged, so existing
+settings survive the upgrade with no migration code.

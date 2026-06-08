@@ -1,11 +1,11 @@
 // options.js v2.0.0 - profile-based UI.
 //
-// One profile = { id, name, scope, terms: ["banned phrase", "cs:NASA"] }.
+// One profile = { id, name, scope, terms: ["sample phrase", "cs:NASA"] }.
 // Scope is one of six kinds; UI shows a dropdown and conditional fields.
-// Save runs every profile through BTWMatching.sanitizeImportedConfig so
+// Save runs every profile through PTHMatching.sanitizeImportedConfig so
 // the stored shape always conforms (limits + allowlist enforced).
-const DEFAULTS = BTWMatching.DEFAULT_CONFIG;
-const M = BTWMatching;
+const DEFAULTS = PTHMatching.DEFAULT_CONFIG;
+const M = PTHMatching;
 
 // In-memory working copy of profiles. Re-rendered on Add/Remove; field
 // values are read from the DOM at save time.
@@ -170,7 +170,7 @@ function renderProfile(profile) {
   ta.placeholder = "confidential\ntop secret\ncs:NASA\ncs:API";
   ta.value = arrToLines(profile.terms);
 
-  const termsField = makeField("Banned terms (one per line; prefix with cs: for case-sensitive)", ta);
+  const termsField = makeField("Terms to highlight (one per line; prefix with cs: for case-sensitive)", ta);
   card.appendChild(termsField);
 
   const meta = document.createElement("div");
@@ -225,7 +225,7 @@ function collectProfiles() {
 }
 
 async function load() {
-  const config = await BTWConfig.getConfig();
+  const config = await PTHConfig.getConfig();
   const c = Object.assign({}, DEFAULTS, config || {});
   document.getElementById("enabled").checked = c.enabled !== false;
   document.getElementById("wholeWordOnly").checked = c.wholeWordOnly !== false;
@@ -265,7 +265,7 @@ async function load() {
 
   renderProfilesList();
 
-  const area = await BTWConfig.getActiveAreaName();
+  const area = await PTHConfig.getActiveAreaName();
   document.getElementById("storageSync").checked = area === "sync";
   document.getElementById("storageLocal").checked = area === "local";
 }
@@ -281,7 +281,7 @@ async function save() {
   const config = M.sanitizeImportedConfig(raw);
   // Detect profile cards that the sanitiser rejected (e.g. invalid scope).
   const rejected = raw.profiles.length - config.profiles.length;
-  await BTWConfig.setConfig(config);
+  await PTHConfig.setConfig(config);
   // Re-load so generated ids appear consistent and rejected cards drop away.
   await load();
   if (rejected > 0) {
@@ -300,10 +300,10 @@ function flashStatus(msg, isError) {
 }
 
 async function handleStorageChange(target) {
-  const res = await BTWConfig.setActiveAreaName(target);
+  const res = await PTHConfig.setActiveAreaName(target);
   if (!res.ok) {
     flashStatus("Storage switch failed: " + res.error, true);
-    const area = await BTWConfig.getActiveAreaName();
+    const area = await PTHConfig.getActiveAreaName();
     document.getElementById("storageSync").checked = area === "sync";
     document.getElementById("storageLocal").checked = area === "local";
     return;
@@ -343,11 +343,11 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   document.getElementById("export").addEventListener("click", async () => {
-    const config = await BTWConfig.getConfig();
+    const config = await PTHConfig.getConfig();
     const blob = new Blob([JSON.stringify(config || DEFAULTS, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url; a.download = "banned-terms-config.json"; a.click();
+    a.href = url; a.download = "page-term-highlighter-config.json"; a.click();
     URL.revokeObjectURL(url);
   });
 
@@ -362,7 +362,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const text = await file.text();
       const parsed = JSON.parse(text);
       const clean = M.sanitizeImportedConfig(parsed);
-      await BTWConfig.setConfig(clean);
+      await PTHConfig.setConfig(clean);
       await load();
       flashStatus("Imported.");
     } catch (err) {
