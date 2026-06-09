@@ -2,7 +2,7 @@
 
 [![Validate](https://github.com/guypritchard/edge-page-term-highlighter/actions/workflows/validate.yml/badge.svg)](https://github.com/guypritchard/edge-page-term-highlighter/actions/workflows/validate.yml)
 [![Release](https://github.com/guypritchard/edge-page-term-highlighter/actions/workflows/release.yml/badge.svg)](https://github.com/guypritchard/edge-page-term-highlighter/actions/workflows/release.yml)
-[![Latest Release](https://badgen.net/github/release/guypritchard/edge-page-term-highlighter/stable)](https://github.com/guypritchard/edge-page-term-highlighter/releases/latest)
+[![Latest Release](https://badgen.net/github/release/guypritchard/edge-page-term-highlighter/stable?cache=v2)](https://github.com/guypritchard/edge-page-term-highlighter/releases/latest)
 
 A Microsoft Edge / Chromium browser extension (Manifest V3) that scans the visible text of every page you load and shows a red ⚠️ banner at the top when any of your configured **terms** appear.
 
